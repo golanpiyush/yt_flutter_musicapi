@@ -410,84 +410,34 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
     }
 }
 
-/*
+
 // Test Usage Examples (commented out for production)
 
 // Initialize
-val initParams = mapOf(
-    "proxy" to null, // or "http://proxy:port"
-    "country" to "US"
-)
+// val initParams = mapOf(
+//     "proxy" to null, // or "http://proxy:port"
+//     "country" to "US"
+// )
 
 // Search Music
-val searchParams = mapOf(
-    "query" to "Gale Lag Ja",
-    "limit" to 10,
-    "thumbQuality" to "VERY_HIGH",
-    "audioQuality" to "VERY_HIGH",
-    "includeAudioUrl" to true,
-    "includeAlbumArt" to true
-)
+// val searchParams = mapOf(
+//     "query" to "Gale Lag Ja",
+//     "limit" to 10,
+//     "thumbQuality" to "VERY_HIGH",
+//     "audioQuality" to "VERY_HIGH",
+//     "includeAudioUrl" to true,
+//     "includeAlbumArt" to true
+// )
 
 // Get Related Songs
-val relatedParams = mapOf(
-    "songName" to "Viva La Vida",
-    "artistName" to "Coldplay",
-    "limit" to 10,
-    "thumbQuality" to "VERY_HIGH",
-    "audioQuality" to "VERY_HIGH",
-    "includeAudioUrl" to true,
-    "includeAlbumArt" to true
-)
+// val relatedParams = mapOf(
+//     "songName" to "Viva La Vida",
+//     "artistName" to "Coldplay",
+//     "limit" to 10,
+//     "thumbQuality" to "VERY_HIGH",
+//     "audioQuality" to "VERY_HIGH",
+//     "includeAudioUrl" to true,
+//     "includeAlbumArt" to true
+// )
 
-// Example Flutter Integration:
-/*
-class _MyAppState extends State<MyApp> {
-  static const platform = MethodChannel('yt_flutter_musicapi');
 
-  Future<void> initializeYTMusic() async {
-    try {
-      final result = await platform.invokeMethod('initialize', {
-        'proxy': null,
-        'country': 'US',
-      });
-      print('Initialization: $result');
-    } catch (e) {
-      print('Failed to initialize: $e');
-    }
-  }
-
-  Future<void> searchMusic() async {
-    try {
-      final result = await platform.invokeMethod('searchMusic', {
-        'query': 'Gale Lag Ja',
-        'limit': 10,
-        'thumbQuality': 'VERY_HIGH',
-        'audioQuality': 'VERY_HIGH',
-        'includeAudioUrl': true,
-        'includeAlbumArt': true,
-      });
-      print('Search results: $result');
-    } catch (e) {
-      print('Search failed: $e');
-    }
-  }
-
-  Future<void> getRelatedSongs() async {
-    try {
-      final result = await platform.invokeMethod('getRelatedSongs', {
-        'songName': 'Viva La Vida',
-        'artistName': 'Coldplay',
-        'limit': 10,
-        'thumbQuality': 'VERY_HIGH',
-        'audioQuality': 'VERY_HIGH',
-        'includeAudioUrl': true,
-        'includeAlbumArt': true,
-      });
-      print('Related songs: $result');
-    } catch (e) {
-      print('Get related songs failed: $e');
-    }
-  }
-}
-*/
