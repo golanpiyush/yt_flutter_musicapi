@@ -1,0 +1,40 @@
+# Flutter
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+flutter_plugins/
+
+/integration_test
+/test
+/test
+
+# Android
+/android/.gradle
+/android/local.properties
+/android/**/gradle_app.setting
+/android/**/gradle-wrapper.jar
+/android/**/gradlew
+/android/**/gradlew.bat
+
+# iOS
+/ios/**/*.mode1v3
+/ios/**/*.mode2v3
+/ios/**/*.moved-aside
+/ios/**/*.pbxuser
+/ios/**/*.perspectivev3
+/ios/**/*sync/
+/ios/.symlinks/
+/ios/Flutter/App.framework
+/ios/Flutter/Flutter.framework
+/ios/Flutter/Generated.xcconfig
+/ios/Flutter/app.flx
+/ios/Flutter/app.zip
+/ios/Flutter/flutter_assets/
+/ios/ServiceDefinitions.json
+/ios/Runner/GeneratedPluginRegistrant.*
+
+# Python
+__pycache__/
+*.pyc
