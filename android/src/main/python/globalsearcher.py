@@ -1241,30 +1241,30 @@ class DynamicLyricsProvider:
 #     print("\nTests completed successfully!")
 
 
-if __name__ == "__main__":
-    print("=== Testing HQ Thumbnail Functionality ===")
+# if __name__ == "__main__":
+#     print("=== Testing HQ Thumbnail Functionality ===")
     
-    # Initialize searcher
-    searcher = YTMusicSearcher(country="US")
+#     # Initialize searcher
+#     searcher = YTMusicSearcher(country="US")
     
-    # Test search with HQ thumbnails
-    print("\n--- Testing Search with VERY_HIGH Quality Thumbnails ---")
-    test_query = "Blinding Lights"
+#     # Test search with HQ thumbnails
+#     print("\n--- Testing Search with VERY_HIGH Quality Thumbnails ---")
+#     test_query = "Blinding Lights"
     
-    for i, song in enumerate(searcher.get_music_details(
-        test_query, 
-        limit=2, 
-        thumb_quality=ThumbnailQuality.VERY_HIGH,
-        audio_quality=AudioQuality.VERY_HIGH,
-        include_audio_url=True  # Faster testing
-    ), 1):
-        print(f"\n{i}. {song['title']} by {song['artists']}")
-        print(f"Video ID: {song['videoId']}")
-        if 'albumArt' in song and song['albumArt']:
-            print(f"HQ Album Art URL: {song['albumArt']}")
-            print(f"HQ Audio URL: {song['audioUrl']}")
-        else:
-            print("No album art found")
+#     for i, song in enumerate(searcher.get_music_details(
+#         test_query, 
+#         limit=2, 
+#         thumb_quality=ThumbnailQuality.VERY_HIGH,
+#         audio_quality=AudioQuality.VERY_HIGH,
+#         include_audio_url=True  # Faster testing
+#     ), 1):
+#         print(f"\n{i}. {song['title']} by {song['artists']}")
+#         print(f"Video ID: {song['videoId']}")
+#         if 'albumArt' in song and song['albumArt']:
+#             print(f"HQ Album Art URL: {song['albumArt']}")
+#             print(f"HQ Audio URL: {song['audioUrl']}")
+#         else:
+#             print("No album art found")
     
     # Test related songs with HQ thumbnails
     # print("\n--- Testing Related Songs with HIGH Quality Thumbnails ---")
@@ -1284,4 +1284,4 @@ if __name__ == "__main__":
     #     else:
     #         print("No album art found")
     
-    print("\nHQ Thumbnail testing completed!")
+    # print("\nHQ Thumbnail testing completed!")
