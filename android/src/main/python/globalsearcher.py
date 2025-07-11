@@ -209,6 +209,141 @@ class YTMusicSearcher:
                 continue
         
         return None
+    
+    def get_hq_album_art_from_ytdlp(self, video_id: str) -> Optional[str]:
+        """
+        Get high quality album art using yt-dlp from video metadata
+        Returns the highest quality album art URL available
+        """
+        try:
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "nocheckcertificate": True,
+                "extract_flat": False,
+                "socket_timeout": 30,
+                "source_address": "0.0.0.0",
+                "force_ipv4": True,
+                "retries": 2,
+                "headers": self._generate_headers()
+            }
+            
+            if self.proxy:
+                ydl_opts["proxy"] = self.proxy
+                ydl_opts["proxy_headers"] = ydl_opts["headers"]
+            
+            ydl = yt_dlp.YoutubeDL(ydl_opts)
+            
+            info = ydl.extract_info(
+                f"https://www.youtube.com/watch?v={video_id}",
+                download=False
+            )
+            
+            # First try to get album art from metadata
+            album_art_url = None
+            
+            # Check for album art in various metadata fields
+            if info.get('album_artist') and info.get('album'):
+                # Try to construct album art URL from metadata
+                album_art_url = self._get_album_art_from_metadata(info)
+            
+            # If no album art from metadata, fall back to high quality thumbnails
+            if not album_art_url:
+                thumbnails = info.get('thumbnails', [])
+                if thumbnails:
+                    # Filter for high quality thumbnails (prefer square ones for album art)
+                    hq_thumbnails = [
+                        t for t in thumbnails 
+                        if t.get('width', 0) >= 720 and t.get('height', 0) >= 720
+                    ]
+                    
+                    if hq_thumbnails:
+                        # Sort by resolution and prefer square aspect ratios
+                        hq_thumbnails.sort(
+                            key=lambda t: (
+                                abs(1.0 - (t.get('width', 1) / t.get('height', 1))),  # Prefer square
+                                (t.get('width', 0) * t.get('height', 0))  # Then by resolution
+                            ),
+                            reverse=True
+                        )
+                        album_art_url = hq_thumbnails[0].get('url', '')
+                    else:
+                        # Fall back to highest resolution thumbnail
+                        thumbnails.sort(
+                            key=lambda t: (t.get('width', 0) * t.get('height', 0)),
+                            reverse=True
+                        )
+                        album_art_url = thumbnails[0].get('url', '')
+            
+            if album_art_url:
+                print(f"HQ Album Art found: {album_art_url}")
+                return album_art_url
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error getting HQ album art for {video_id}: {e}")
+            return None
+
+    def _get_album_art_from_metadata(self, info: dict) -> Optional[str]:
+        """
+        Try to get album art from video metadata
+        """
+        try:
+            # Check for album art in various metadata fields
+            album_art_fields = ['album_art', 'album_artwork', 'artwork', 'cover']
+            
+            for field in album_art_fields:
+                if info.get(field):
+                    return info[field]
+            
+            # Try to get from uploader avatar if it's an official channel
+            uploader = info.get('uploader', '').lower()
+            if any(keyword in uploader for keyword in ['official', 'records', 'music', 'vevo']):
+                uploader_avatar = info.get('uploader_avatar_url')
+                if uploader_avatar:
+                    return uploader_avatar
+            
+            return None
+            
+        except Exception:
+            return None
+
+    def get_youtube_music_album_art(self, video_id: str) -> Optional[str]:
+        """
+        Get album art specifically from YouTube Music metadata
+        """
+        try:
+            # Use YTMusic to get song details which might have better album art
+            song_info = self.ytmusic.get_song(video_id)
+            
+            # Extract album art from song info
+            thumbnails = song_info.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails', [])
+            
+            if thumbnails:
+                # Sort by resolution to get highest quality
+                thumbnails.sort(
+                    key=lambda t: (t.get('width', 0) * t.get('height', 0)),
+                    reverse=True
+                )
+                
+                # Prefer square thumbnails for album art
+                square_thumbnails = [
+                    t for t in thumbnails 
+                    if abs(1.0 - (t.get('width', 1) / t.get('height', 1))) < 0.1
+                ]
+                
+                if square_thumbnails:
+                    return square_thumbnails[0].get('url', '')
+                else:
+                    return thumbnails[0].get('url', '')
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error getting YouTube Music album art for {video_id}: {e}")
+            return None
 
     def get_music_details(
         self,
@@ -267,24 +402,62 @@ class YTMusicSearcher:
 
                 album_art = ""
                 if include_album_art:
-                    thumbnails = item.get("thumbnails", [])
-                    print(f"Found {len(thumbnails)} thumbnails")
-                    if thumbnails:
-                        if thumb_quality == ThumbnailQuality.VERY_HIGH:
-                            thumbnails.sort(
-                                key=lambda t: int(t.get("width", 0)) * int(t.get("height", 0)),
-                                reverse=True
-                            )
-                            url = thumbnails[0].get("url", "")
-                            album_art = url.split('=')[0] if '=' in url else url
-                        else:
-                            index = {
-                                ThumbnailQuality.LOW: 0,
-                                ThumbnailQuality.MED: min(1, len(thumbnails) - 1),
-                                ThumbnailQuality.HIGH: min(2, len(thumbnails) - 1)
-                            }.get(thumb_quality, -1)
-                            album_art = thumbnails[index].get("url", "")
-                    print(f"Album art URL: {album_art}")
+                    if thumb_quality in [ThumbnailQuality.HIGH, ThumbnailQuality.VERY_HIGH]:
+                        print(f"Trying to get HQ album art for video ID: {video_id}")
+                        
+                        # Method 1: Try YouTube Music specific album art
+                        album_art = self.get_youtube_music_album_art(video_id)
+                        
+                        # Method 2: Try yt-dlp with album art focus
+                        if not album_art:
+                            album_art = self.get_hq_album_art_from_ytdlp(video_id)
+                        
+                        # Method 3: Fallback to YTMusic thumbnails
+                        if not album_art:
+                            print("Falling back to YTMusic thumbnails")
+                            thumbnails = item.get("thumbnails", [])
+                            if thumbnails:
+                                base_url = thumbnails[-1].get("url", "")
+                                if base_url:
+                                    import re
+                                    if thumb_quality == ThumbnailQuality.HIGH:
+                                        # w320-h320-l90-rj for high quality
+                                        album_art = re.sub(r'w\d+-h\d+', 'w320-h320', base_url)
+                                    elif thumb_quality == ThumbnailQuality.VERY_HIGH:
+                                        # w544-h544-l90-rj for very high quality
+                                        album_art = re.sub(r'w\d+-h\d+', 'w544-h544', base_url)
+                                    else:
+                                        album_art = base_url
+                        
+                        # Apply quality settings to HQ URLs if they contain YouTube image patterns
+                        if album_art and any(pattern in album_art for pattern in ['googleusercontent.com', 'ytimg.com', 'youtube.com']):
+                            import re
+                            if thumb_quality == ThumbnailQuality.HIGH:
+                                # Force HIGH quality resolution even for HQ sources
+                                album_art = re.sub(r'w\d+-h\d+', 'w320-h320', album_art)
+                            elif thumb_quality == ThumbnailQuality.VERY_HIGH:
+                                # Keep or set VERY_HIGH quality resolution
+                                album_art = re.sub(r'w\d+-h\d+', 'w544-h544', album_art)
+                    else:
+                        # Use YTMusic thumbnails for LOW and MED quality
+                        thumbnails = item.get("thumbnails", [])
+                        print(f"Found {len(thumbnails)} thumbnails from YTMusic")
+                        if thumbnails:
+                            base_url = thumbnails[-1].get("url", "")
+                            if base_url:
+                                import re
+                                if thumb_quality == ThumbnailQuality.LOW:
+                                    # w60-h60-l90-rj for lowest quality
+                                    album_art = re.sub(r'w\d+-h\d+', 'w60-h60', base_url)
+                                elif thumb_quality == ThumbnailQuality.MED:
+                                    # w120-h120-l90-rj for medium quality
+                                    album_art = re.sub(r'w\d+-h\d+', 'w120-h120', base_url)
+                                else:
+                                    album_art = base_url
+                            else:
+                                album_art = ""
+                        print(f"Album art URL: {album_art}")
+
 
                 audio_url = None
                 if include_audio_url:
@@ -332,7 +505,6 @@ class YTMusicSearcher:
                 continue
 
         print(f"Finished processing. Found {processed_count} valid results (skipped {skipped_count})")
-
 
 # =================================================================================================================================
 # =================================================================================================================================
@@ -462,6 +634,141 @@ class YTMusicRelatedFetcher:
                 continue
         
         return None
+    
+    def get_hq_album_art_from_ytdlp(self, video_id: str) -> Optional[str]:
+        """
+        Get high quality album art using yt-dlp from video metadata
+        Returns the highest quality album art URL available
+        """
+        try:
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "nocheckcertificate": True,
+                "extract_flat": False,
+                "socket_timeout": 30,
+                "source_address": "0.0.0.0",
+                "force_ipv4": True,
+                "retries": 2,
+                "headers": self._generate_headers()
+            }
+            
+            if self.proxy:
+                ydl_opts["proxy"] = self.proxy
+                ydl_opts["proxy_headers"] = ydl_opts["headers"]
+            
+            ydl = yt_dlp.YoutubeDL(ydl_opts)
+            
+            info = ydl.extract_info(
+                f"https://www.youtube.com/watch?v={video_id}",
+                download=False
+            )
+            
+            # First try to get album art from metadata
+            album_art_url = None
+            
+            # Check for album art in various metadata fields
+            if info.get('album_artist') and info.get('album'):
+                # Try to construct album art URL from metadata
+                album_art_url = self._get_album_art_from_metadata(info)
+            
+            # If no album art from metadata, fall back to high quality thumbnails
+            if not album_art_url:
+                thumbnails = info.get('thumbnails', [])
+                if thumbnails:
+                    # Filter for high quality thumbnails (prefer square ones for album art)
+                    hq_thumbnails = [
+                        t for t in thumbnails 
+                        if t.get('width', 0) >= 720 and t.get('height', 0) >= 720
+                    ]
+                    
+                    if hq_thumbnails:
+                        # Sort by resolution and prefer square aspect ratios
+                        hq_thumbnails.sort(
+                            key=lambda t: (
+                                abs(1.0 - (t.get('width', 1) / t.get('height', 1))),  # Prefer square
+                                (t.get('width', 0) * t.get('height', 0))  # Then by resolution
+                            ),
+                            reverse=True
+                        )
+                        album_art_url = hq_thumbnails[0].get('url', '')
+                    else:
+                        # Fall back to highest resolution thumbnail
+                        thumbnails.sort(
+                            key=lambda t: (t.get('width', 0) * t.get('height', 0)),
+                            reverse=True
+                        )
+                        album_art_url = thumbnails[0].get('url', '')
+            
+            if album_art_url:
+                print(f"HQ Album Art found: {album_art_url}")
+                return album_art_url
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error getting HQ album art for {video_id}: {e}")
+            return None
+
+    def _get_album_art_from_metadata(self, info: dict) -> Optional[str]:
+        """
+        Try to get album art from video metadata
+        """
+        try:
+            # Check for album art in various metadata fields
+            album_art_fields = ['album_art', 'album_artwork', 'artwork', 'cover']
+            
+            for field in album_art_fields:
+                if info.get(field):
+                    return info[field]
+            
+            # Try to get from uploader avatar if it's an official channel
+            uploader = info.get('uploader', '').lower()
+            if any(keyword in uploader for keyword in ['official', 'records', 'music', 'vevo']):
+                uploader_avatar = info.get('uploader_avatar_url')
+                if uploader_avatar:
+                    return uploader_avatar
+            
+            return None
+            
+        except Exception:
+            return None
+
+    def get_youtube_music_album_art(self, video_id: str) -> Optional[str]:
+        """
+        Get album art specifically from YouTube Music metadata
+        """
+        try:
+            # Use YTMusic to get song details which might have better album art
+            song_info = self.ytmusic.get_song(video_id)
+            
+            # Extract album art from song info
+            thumbnails = song_info.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails', [])
+            
+            if thumbnails:
+                # Sort by resolution to get highest quality
+                thumbnails.sort(
+                    key=lambda t: (t.get('width', 0) * t.get('height', 0)),
+                    reverse=True
+                )
+                
+                # Prefer square thumbnails for album art
+                square_thumbnails = [
+                    t for t in thumbnails 
+                    if abs(1.0 - (t.get('width', 1) / t.get('height', 1))) < 0.1
+                ]
+                
+                if square_thumbnails:
+                    return square_thumbnails[0].get('url', '')
+                else:
+                    return thumbnails[0].get('url', '')
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error getting YouTube Music album art for {video_id}: {e}")
+            return None
 
     def _find_song_video_id(self, song_name: str, artist_name: str) -> Optional[str]:
         query = f"{song_name} {artist_name}"
@@ -555,23 +862,59 @@ class YTMusicRelatedFetcher:
                 
                 album_art = ""
                 if include_album_art:
-                    thumbnails = item.get("thumbnail", [])
-                    if thumbnails:
-                        if thumb_quality == ThumbnailQuality.VERY_HIGH:
-                            thumbnails.sort(
-                                key=lambda t: int(t.get("width", 0)) * int(t.get("height", 0)),
-                                reverse=True
-                            )
-                            album_art = thumbnails[0].get("url", "")
-                        else:
-                            quality_index = {
-                                ThumbnailQuality.LOW: 0,
-                                ThumbnailQuality.MED: 1,
-                                ThumbnailQuality.HIGH: 2
-                            }.get(thumb_quality, 0)
-                            quality_index = min(quality_index, len(thumbnails) - 1)
-                            album_art = thumbnails[quality_index].get("url", "")
-
+                    if thumb_quality in [ThumbnailQuality.HIGH, ThumbnailQuality.VERY_HIGH]:
+                        print(f"Trying to get HQ album art for related track: {track_video_id}")
+                        
+                        # Method 1: Try YouTube Music specific album art
+                        album_art = self.get_youtube_music_album_art(track_video_id)
+                        
+                        # Method 2: Try yt-dlp with album art focus
+                        if not album_art:
+                            album_art = self.get_hq_album_art_from_ytdlp(track_video_id)
+                        
+                        # Method 3: Fallback to YTMusic thumbnails
+                        if not album_art:
+                            print("Falling back to YTMusic thumbnails for related track")
+                            thumbnails = item.get("thumbnail", [])
+                            if thumbnails:
+                                base_url = thumbnails[-1].get("url", "")
+                                if base_url:
+                                    import re
+                                    if thumb_quality == ThumbnailQuality.HIGH:
+                                        # w320-h320-l90-rj for high quality
+                                        album_art = re.sub(r'w\d+-h\d+', 'w320-h320', base_url)
+                                    elif thumb_quality == ThumbnailQuality.VERY_HIGH:
+                                        # w544-h544-l90-rj for very high quality
+                                        album_art = re.sub(r'w\d+-h\d+', 'w544-h544', base_url)
+                                    else:
+                                        album_art = base_url
+                        
+                        # Apply quality settings to HQ URLs if they contain YouTube image patterns
+                        if album_art and any(pattern in album_art for pattern in ['googleusercontent.com', 'ytimg.com', 'youtube.com']):
+                            import re
+                            if thumb_quality == ThumbnailQuality.HIGH:
+                                # Force HIGH quality resolution even for HQ sources
+                                album_art = re.sub(r'w\d+-h\d+', 'w320-h320', album_art)
+                            elif thumb_quality == ThumbnailQuality.VERY_HIGH:
+                                # Keep or set VERY_HIGH quality resolution
+                                album_art = re.sub(r'w\d+-h\d+', 'w544-h544', album_art)
+                    else:
+                        # Use YTMusic thumbnails for all quality levels
+                        thumbnails = item.get("thumbnail", [])
+                        if thumbnails:
+                            base_url = thumbnails[-1].get("url", "")
+                            if base_url:
+                                import re
+                                if thumb_quality == ThumbnailQuality.LOW:
+                                    # w60-h60-l90-rj for lowest quality
+                                    album_art = re.sub(r'w\d+-h\d+', 'w60-h60', base_url)
+                                elif thumb_quality == ThumbnailQuality.MED:
+                                    # w120-h120-l90-rj for medium quality
+                                    album_art = re.sub(r'w\d+-h\d+', 'w120-h120', base_url)
+                                else:
+                                    album_art = base_url
+                            else:
+                                album_art = ""
                 audio_url = None
                 if include_audio_url:
                     for _ in range(3):
@@ -896,3 +1239,49 @@ class DynamicLyricsProvider:
 #         print(f"Is Original: {song.get('isOriginal', False)}")
     
 #     print("\nTests completed successfully!")
+
+
+if __name__ == "__main__":
+    print("=== Testing HQ Thumbnail Functionality ===")
+    
+    # Initialize searcher
+    searcher = YTMusicSearcher(country="US")
+    
+    # Test search with HQ thumbnails
+    print("\n--- Testing Search with VERY_HIGH Quality Thumbnails ---")
+    test_query = "Blinding Lights"
+    
+    for i, song in enumerate(searcher.get_music_details(
+        test_query, 
+        limit=2, 
+        thumb_quality=ThumbnailQuality.VERY_HIGH,
+        audio_quality=AudioQuality.VERY_HIGH,
+        include_audio_url=True  # Faster testing
+    ), 1):
+        print(f"\n{i}. {song['title']} by {song['artists']}")
+        print(f"Video ID: {song['videoId']}")
+        if 'albumArt' in song and song['albumArt']:
+            print(f"HQ Album Art URL: {song['albumArt']}")
+            print(f"HQ Audio URL: {song['audioUrl']}")
+        else:
+            print("No album art found")
+    
+    # Test related songs with HQ thumbnails
+    # print("\n--- Testing Related Songs with HIGH Quality Thumbnails ---")
+    # related_fetcher = YTMusicRelatedFetcher(country="US")
+    
+    # for i, song in enumerate(related_fetcher.getRelated(
+    #     song_name="Shape of You",
+    #     artist_name="Ed Sheeran",
+    #     limit=2,
+    #     thumb_quality=ThumbnailQuality.HIGH,
+    #     include_audio_url=False
+    # ), 1):
+    #     print(f"\n{i}. {song['title']} by {song['artists']}")
+    #     print(f"Video ID: {song['videoId']}")
+    #     if 'albumArt' in song and song['albumArt']:
+    #         print(f"HQ Album Art URL: {song['albumArt']}")
+    #     else:
+    #         print("No album art found")
+    
+    print("\nHQ Thumbnail testing completed!")

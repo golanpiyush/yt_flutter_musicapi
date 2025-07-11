@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3]
+
+### Fixed
+- Fixed the ThumbnailQuality in python file.
+
+- LOW: w60-h60 (60x60 pixels) 
+- MED: w120-h120 (120x120 pixels)
+- HIGH: w320-h320 (320x320 pixels)
+- VERY_HIGH: w544-h544 (544x544 pixels)
+
 ## [1.1.2]
 
 ### Fixed
@@ -13,12 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - More songs by a particular `artist` and getting related `artists`. (Not fully implemented!)
 
----
+
 ## [1.0.2]
 
 ### Fixed
 - Fixed an issue of `Syntax error around line 441 in the kotlin file`
----
+
 ## [1.0.1]
 
 ### Added
