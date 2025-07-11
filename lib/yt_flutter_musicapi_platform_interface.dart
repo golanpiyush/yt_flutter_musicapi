@@ -23,10 +23,6 @@ abstract class YtFlutterMusicapiPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  Future<String?> getPlatformVersion() {
-    throw UnimplementedError('getPlatformVersion() has not been implemented.');
-  }
-
   Future<Map<String, dynamic>> initialize({
     String? proxy,
     String country = 'US',
@@ -55,6 +51,15 @@ abstract class YtFlutterMusicapiPlatform extends PlatformInterface {
     bool includeAlbumArt = true,
   }) {
     throw UnimplementedError('getRelatedSongs() has not been implemented.');
+  }
+
+  /// Fetch lyrics for a song by title and artist
+  Future<Map<String, dynamic>> fetchLyrics({
+    required String title,
+    required String artist,
+    int? duration,
+  }) {
+    throw UnimplementedError('fetchLyrics() has not been implemented.');
   }
 
   Future<Map<String, dynamic>> dispose() {

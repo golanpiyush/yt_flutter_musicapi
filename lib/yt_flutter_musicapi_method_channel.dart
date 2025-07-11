@@ -14,11 +14,15 @@ class MethodChannelYtFlutterMusicapi extends YtFlutterMusicapiPlatform {
     String? proxy,
     String country = 'US',
   }) async {
-    final result = await methodChannel.invokeMethod<Map<String, dynamic>>(
+    final result = await methodChannel.invokeMethod(
       'initialize',
-      {'proxy': proxy, 'country': country},
+      {
+        'proxy': proxy,
+        'country': country,
+      },
     );
-    return result ?? {};
+
+    return (result as Map).cast<String, dynamic>();
   }
 
   @override
@@ -30,16 +34,19 @@ class MethodChannelYtFlutterMusicapi extends YtFlutterMusicapiPlatform {
     bool includeAudioUrl = true,
     bool includeAlbumArt = true,
   }) async {
-    final result = await methodChannel
-        .invokeMethod<Map<String, dynamic>>('searchMusic', {
-          'query': query,
-          'limit': limit,
-          'thumbQuality': thumbQuality,
-          'audioQuality': audioQuality,
-          'includeAudioUrl': includeAudioUrl,
-          'includeAlbumArt': includeAlbumArt,
-        });
-    return result ?? {};
+    final result = await methodChannel.invokeMethod(
+      'searchMusic',
+      {
+        'query': query,
+        'limit': limit,
+        'thumbQuality': thumbQuality,
+        'audioQuality': audioQuality,
+        'includeAudioUrl': includeAudioUrl,
+        'includeAlbumArt': includeAlbumArt,
+      },
+    );
+
+    return (result as Map).cast<String, dynamic>();
   }
 
   @override
@@ -52,24 +59,43 @@ class MethodChannelYtFlutterMusicapi extends YtFlutterMusicapiPlatform {
     bool includeAudioUrl = true,
     bool includeAlbumArt = true,
   }) async {
-    final result = await methodChannel
-        .invokeMethod<Map<String, dynamic>>('getRelatedSongs', {
-          'songName': songName,
-          'artistName': artistName,
-          'limit': limit,
-          'thumbQuality': thumbQuality,
-          'audioQuality': audioQuality,
-          'includeAudioUrl': includeAudioUrl,
-          'includeAlbumArt': includeAlbumArt,
-        });
-    return result ?? {};
+    final result = await methodChannel.invokeMethod(
+      'getRelatedSongs',
+      {
+        'songName': songName,
+        'artistName': artistName,
+        'limit': limit,
+        'thumbQuality': thumbQuality,
+        'audioQuality': audioQuality,
+        'includeAudioUrl': includeAudioUrl,
+        'includeAlbumArt': includeAlbumArt,
+      },
+    );
+
+    return (result as Map).cast<String, dynamic>();
+  }
+
+  @override
+  Future<Map<String, dynamic>> fetchLyrics({
+    required String title,
+    required String artist,
+    int? duration,
+  }) async {
+    final result = await methodChannel.invokeMethod(
+      'getLyrics',
+      {
+        'title': title.trim(),
+        'artist': artist.trim(),
+        'duration': duration ?? -1,
+      },
+    );
+
+    return (result as Map).cast<String, dynamic>();
   }
 
   @override
   Future<Map<String, dynamic>> dispose() async {
-    final result = await methodChannel.invokeMethod<Map<String, dynamic>>(
-      'dispose',
-    );
-    return result ?? {};
+    final result = await methodChannel.invokeMethod('dispose');
+    return (result as Map).cast<String, dynamic>();
   }
 }

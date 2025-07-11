@@ -9,6 +9,9 @@ A Flutter plugin for accessing YouTube Music's search and related songs function
 - Customizable audio and thumbnail quality
 - Cross-platform support (Android)
 
+ For Testing the API go-to :
+ `https://github.com/golanpiyush/yt_flutter_musicapi/releases`
+ 
 ## Installation
 
 Add to your `pubspec.yaml`:

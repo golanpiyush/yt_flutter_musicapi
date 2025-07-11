@@ -1,15 +1,76 @@
-from ytmusicapi import YTMusic
+import base64
 from enum import Enum
-from typing import Generator, Optional
-import yt_dlp
+import re
+from typing import Any, Dict, Generator, List, Optional
 import warnings
 import random
 import time
 import socket
 from urllib.error import URLError
 
+import requests
+
 # Suppress warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+ytmv = "1.10.3"
+ytdlpv = "2025.06.30"
+
+# For Debugging
+try:
+    from ytmusicapi import YTMusic
+    import yt_dlp
+    print("✅ Imported ytmusicapi and yt-dlp successfully")
+except Exception as e:
+    print("❌ Failed to import:", e)
+
+def check_ytmusic_and_ytdlp_ready():
+    try:
+        # Import and get version info
+        import ytmusicapi
+        import yt_dlp
+        
+        # Initialize YTMusic
+        ytmusic = ytmusicapi.YTMusic()
+        
+        # Initialize yt-dlp
+        ydl = yt_dlp.YoutubeDL()
+        
+        # Get version information
+        ytmusic_version = ytmusicapi.__version__ if hasattr(ytmusicapi, '__version__') else 'Unknown'
+        ytdlp_version = yt_dlp.version.__version__ if hasattr(yt_dlp, 'version') else 'Unknown'
+        
+        print("✅ YTMusic and yt-dlp initialized successfully")
+        
+        return {
+            "success": True,
+            "ytmusic_ready": True,
+            "ytmusic_version": ytmusic_version,
+            "ytdlp_ready": True,
+            "ytdlp_version": ytdlp_version,
+            "message": "✅ All systems ready and working.."
+        }
+    except Exception as e:
+        print(f"❌ Initialization failed: {e}")
+        return {
+            "success": False,
+            "message": f"Initialization failed: {str(e)}",
+            "ytmusic_ready": False,
+            "ytdlp_ready": False
+        }
+
+def debug_dependencies():
+    import sys
+    from importlib.util import find_spec
+    
+    dependencies = {
+        'ytmusicapi': find_spec("ytmusicapi") is not None,
+        'yt_dlp': find_spec("yt_dlp") is not None,
+        'python_version': sys.version,
+        'python_path': sys.path
+    }
+    return dependencies
+
 
 # Enums for quality settings
 class AudioQuality(Enum):
@@ -153,32 +214,47 @@ class YTMusicSearcher:
         self,
         query: str,
         limit: int = 10,
-        thumb_quality: ThumbnailQuality = ThumbnailQuality.VERY_HIGH,
-        audio_quality: AudioQuality = AudioQuality.VERY_HIGH,
+        thumb_quality: ThumbnailQuality = ThumbnailQuality.HIGH,
+        audio_quality: AudioQuality = AudioQuality.HIGH,
         include_audio_url: bool = True,
         include_album_art: bool = True
     ) -> Generator[dict, None, None]:
+        print(f"Starting search for query: {query}, limit: {limit}")
         processed_count = 0
         skipped_count = 0
         max_attempts = limit * 3
         
+        results = None
         for attempt in range(3):
             try:
+                print(f"Attempt {attempt + 1} to search...")
                 results = self.ytmusic.search(query, filter="songs", limit=max_attempts)
+                print(f"Search returned {len(results) if results else 0} results")
                 break
-            except Exception:
+            except Exception as e:
+                print(f"Search attempt {attempt + 1} failed: {e}")
                 if attempt == 2:
+                    print("All search attempts failed, returning empty")
                     return
                 time.sleep(2 ** attempt)
                 self._initialize_ytmusic()
 
-        for item in results:
+        if not results:
+            print("No results found")
+            return
+
+        print(f"Processing {len(results)} results...")
+        for i, item in enumerate(results):
+            print(f"Processing item {i + 1}: {item.get('title', 'No title')}")
+            
             if processed_count >= limit:
+                print(f"Reached limit of {limit} items")
                 break
                 
             try:
                 video_id = item.get("videoId")
                 if not video_id:
+                    print(f"Skipping item {i + 1}: No videoId")
                     skipped_count += 1
                     continue
 
@@ -187,9 +263,12 @@ class YTMusicSearcher:
                 duration = item.get("duration")
                 year = item.get("year")
 
+                print(f"Basic info extracted - Title: {title}, Artists: {artists}")
+
                 album_art = ""
                 if include_album_art:
                     thumbnails = item.get("thumbnails", [])
+                    print(f"Found {len(thumbnails)} thumbnails")
                     if thumbnails:
                         if thumb_quality == ThumbnailQuality.VERY_HIGH:
                             thumbnails.sort(
@@ -205,16 +284,28 @@ class YTMusicSearcher:
                                 ThumbnailQuality.HIGH: min(2, len(thumbnails) - 1)
                             }.get(thumb_quality, -1)
                             album_art = thumbnails[index].get("url", "")
+                    print(f"Album art URL: {album_art}")
 
                 audio_url = None
                 if include_audio_url:
-                    for _ in range(3):
-                        audio_url = self.get_audio_url(video_id, audio_quality)
-                        if audio_url:
-                            break
+                    print(f"Getting audio URL for video ID: {video_id}")
+                    for attempt in range(3):
+                        try:
+                            audio_url = self.get_audio_url(video_id, audio_quality)
+                            if audio_url:
+                                print(f"Got audio URL on attempt {attempt + 1}")
+                                break
+                            else:
+                                print(f"No audio URL on attempt {attempt + 1}")
+                        except Exception as e:
+                            print(f"Audio URL attempt {attempt + 1} failed: {e}")
                         time.sleep(1)
 
-                if not include_audio_url or audio_url:
+                # Check if we should yield this result
+                should_yield = not include_audio_url or audio_url
+                print(f"Should yield: {should_yield} (include_audio_url: {include_audio_url}, audio_url: {audio_url is not None})")
+
+                if should_yield:
                     song_data = {
                         "title": title,
                         "artists": artists,
@@ -228,15 +319,19 @@ class YTMusicSearcher:
                         song_data["audioUrl"] = audio_url
 
                     processed_count += 1
+                    print(f"Yielding song data {processed_count}: {song_data}")
+
                     yield song_data
                 else:
+                    print(f"Skipping item {i + 1}: Could not get audio URL")
                     skipped_count += 1
 
-            except Exception:
+            except Exception as e:
+                print(f"Error processing item {i + 1}: {e}")
                 skipped_count += 1
                 continue
 
-        print(f"Found {processed_count} valid results (skipped {skipped_count})")
+        print(f"Finished processing. Found {processed_count} valid results (skipped {skipped_count})")
 
 
 # =================================================================================================================================
@@ -413,8 +508,8 @@ class YTMusicRelatedFetcher:
         song_name: str,
         artist_name: str,
         limit: int = 10,
-        thumb_quality: ThumbnailQuality = ThumbnailQuality.VERY_HIGH,
-        audio_quality: AudioQuality = AudioQuality.VERY_HIGH,
+        thumb_quality: ThumbnailQuality = ThumbnailQuality.HIGH,
+        audio_quality: AudioQuality = AudioQuality.HIGH,
         include_audio_url: bool = True,
         include_album_art: bool = True
     ) -> Generator[dict, None, None]:
@@ -509,6 +604,258 @@ class YTMusicRelatedFetcher:
                 continue
 
         print(f"Found {processed_count} valid related songs (skipped {skipped_count})")
+
+
+# =================================================================================================================================
+# =================================================================================================================================
+
+
+class DynamicLyricsProvider:
+    """
+    A dynamic lyrics provider that fetches lyrics with timestamps from KuGou.
+    Designed for Flutter/Kotlin integration to provide real-time lyrics display.
+    """
+    
+    PAGE_SIZE = 8
+    HEAD_CUT_LIMIT = 30
+    DURATION_TOLERANCE = 8
+    ACCEPTED_REGEX = re.compile(r"\[(\d\d):(\d\d)\.(\d{2,3})\].*")
+    BANNED_REGEX = re.compile(r".+].+[:：].+")
+    
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+    
+    def normalize_title(self, title: str) -> str:
+        """Clean title for better search results"""
+        return re.sub(r'\(.*\)|（.*）|「.*」|『.*』|<.*>|《.*》|〈.*〉|＜.*＞', '', title).strip()
+    
+    def normalize_artist(self, artist: str) -> str:
+        """Clean artist name for better search results"""
+        artist = re.sub(r', | & |\.|和', '、', artist)
+        return re.sub(r'\(.*\)|（.*）', '', artist).strip()
+    
+    def generate_keyword(self, title: str, artist: str) -> Dict[str, str]:
+        """Generate search keywords from title and artist"""
+        return {
+            'title': self.normalize_title(title),
+            'artist': self.normalize_artist(artist)
+        }
+    
+    def normalize_lyrics(self, lyrics: str) -> str:
+        """Clean and filter lyrics to keep only timestamped lines"""
+        lyrics = lyrics.replace("&apos;", "'")
+        lines = [line for line in lyrics.split('\n') if self.ACCEPTED_REGEX.match(line)]
+        
+        # Remove useless info from beginning
+        head_cut_line = 0
+        for i in range(min(self.HEAD_CUT_LIMIT, len(lines)-1), -1, -1):
+            if self.BANNED_REGEX.match(lines[i]):
+                head_cut_line = i + 1
+                break
+        filtered_lines = lines[head_cut_line:]
+        
+        # Remove useless info from end
+        tail_cut_line = 0
+        for i in range(min(len(lines)-self.HEAD_CUT_LIMIT, len(lines)-1), -1, -1):
+            if self.BANNED_REGEX.match(lines[len(lines)-1-i]):
+                tail_cut_line = i + 1
+                break
+        final_lines = filtered_lines[:len(filtered_lines)-tail_cut_line] if tail_cut_line > 0 else filtered_lines
+        
+        return '\n'.join(final_lines)
+    
+    def search_songs(self, keyword: Dict[str, str]) -> Dict[str, Any]:
+        """Search for songs on KuGou to get hash"""
+        url = "https://mobileservice.kugou.com/api/v3/search/song"
+        params = {
+            'version': 9108,
+            'plat': 0,
+            'pagesize': self.PAGE_SIZE,
+            'showtype': 0,
+            'keyword': f"{keyword['title']} - {keyword['artist']}"
+        }
+        try:
+            response = self.session.get(url, params=params, timeout=10)
+            return response.json()
+        except Exception as e:
+            print(f"Error searching songs: {e}")
+            return {}
+    
+    def search_lyrics_by_keyword(self, keyword: Dict[str, str], duration: int = -1) -> Dict[str, Any]:
+        """Search for lyrics by keyword"""
+        url = "https://lyrics.kugou.com/search"
+        params = {
+            'ver': 1,
+            'man': 'yes',
+            'client': 'pc',
+            'keyword': f"{keyword['title']} - {keyword['artist']}"
+        }
+        if duration != -1:
+            params['duration'] = duration * 1000
+        
+        try:
+            response = self.session.get(url, params=params, timeout=10)
+            return response.json()
+        except Exception as e:
+            print(f"Error searching lyrics by keyword: {e}")
+            return {}
+    
+    def search_lyrics_by_hash(self, hash: str) -> Dict[str, Any]:
+        """Search for lyrics by song hash"""
+        url = "https://lyrics.kugou.com/search"
+        params = {
+            'ver': 1,
+            'man': 'yes',
+            'client': 'pc',
+            'hash': hash
+        }
+        try:
+            response = self.session.get(url, params=params, timeout=10)
+            return response.json()
+        except Exception as e:
+            print(f"Error searching lyrics by hash: {e}")
+            return {}
+    
+    def download_lyrics(self, id: str, accesskey: str) -> Dict[str, Any]:
+        """Download lyrics content"""
+        url = "https://lyrics.kugou.com/download"
+        params = {
+            'fmt': 'lrc',
+            'charset': 'utf8',
+            'client': 'pc',
+            'ver': 1,
+            'id': id,
+            'accesskey': accesskey
+        }
+        try:
+            response = self.session.get(url, params=params, timeout=10)
+            return response.json()
+        except Exception as e:
+            print(f"Error downloading lyrics: {e}")
+            return {}
+    
+    def parse_lrc_timestamps(self, lyrics: str) -> List[Dict[str, Any]]:
+        """Parse LRC format and convert to structured format for Flutter"""
+        lines = []
+        for line in lyrics.split('\n'):
+            match = self.ACCEPTED_REGEX.match(line)
+            if match:
+                minutes = int(match.group(1))
+                seconds = int(match.group(2))
+                milliseconds = int(match.group(3).ljust(3, '0')[:3])  # Ensure 3 digits
+                
+                timestamp_ms = (minutes * 60 * 1000) + (seconds * 1000) + milliseconds
+                text = line.split(']', 1)[1].strip() if ']' in line else ""
+                
+                if text:  # Only add non-empty lines
+                    lines.append({
+                        'timestamp': timestamp_ms,
+                        'text': text,
+                        'time_formatted': f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+                    })
+        
+        return sorted(lines, key=lambda x: x['timestamp'])
+    
+    def fetch_lyrics(self, title: str, artist: str, duration: int = -1) -> Optional[Dict[str, Any]]:
+        """
+        Main method to fetch lyrics with timestamps.
+        Returns simplified structured data suitable for Flutter/Kotlin integration.
+        """
+        print(f"Starting lyrics fetch for: {title} by {artist}")
+        
+        keyword = self.generate_keyword(title, artist)
+        print(f"Generated keyword: {keyword}")
+
+        # First try searching by song hash
+        print("Searching songs by keyword...")
+        songs = self.search_songs(keyword)
+        print(f"Found {len(songs.get('data', {}).get('info', []))} song matches")
+
+        for song in songs.get('data', {}).get('info', []):
+            try:
+                if duration == -1 or abs(song['duration'] - duration) <= self.DURATION_TOLERANCE:
+                    print(f"Trying song hash: {song['hash']}")
+                    lyrics_data = self.search_lyrics_by_hash(song['hash'])
+                    print(f"Lyrics search result: {lyrics_data}")
+
+                    if lyrics_data.get('candidates'):
+                        candidate = lyrics_data['candidates'][0]
+                        print(f"Downloading lyrics for candidate: {candidate}")
+                        lyrics = self.download_lyrics(candidate['id'], candidate['accesskey'])
+                        print(f"Downloaded lyrics content: {lyrics.get('content') is not None}")
+
+                        if lyrics.get('content'):
+                            try:
+                                content = base64.b64decode(lyrics['content']).decode('utf-8')
+                                normalized = self.normalize_lyrics(content)
+                                print(f"Normalized lyrics length: {len(normalized)} chars")
+
+                                if "纯音乐，请欣赏" in normalized or "酷狗音乐  就是歌多" in normalized:
+                                    print("Skipping instrumental track")
+                                    continue
+                                
+                                parsed_lyrics = self.parse_lrc_timestamps(normalized)
+                                print(f"Parsed {len(parsed_lyrics)} lyrics lines")
+
+                                if parsed_lyrics:
+                                    return {
+                                        'success': True,
+                                        'lyrics': parsed_lyrics,
+                                        'source': 'KuGou',
+                                        'total_lines': len(parsed_lyrics)
+                                    }
+                            except Exception as e:
+                                print(f"Error processing lyrics: {e}")
+                                continue
+            except Exception as e:
+                print(f"Error processing song: {e}")
+                continue
+
+        # If not found, try searching by keyword
+        print("Trying lyrics search by keyword...")
+        lyrics_data = self.search_lyrics_by_keyword(keyword, duration)
+        print(f"Keyword search result: {lyrics_data}")
+
+        if lyrics_data.get('candidates'):
+            candidate = lyrics_data['candidates'][0]
+            print(f"Downloading lyrics for keyword candidate: {candidate}")
+            lyrics = self.download_lyrics(candidate['id'], candidate['accesskey'])
+            print(f"Downloaded lyrics content: {lyrics.get('content') is not None}")
+
+            if lyrics.get('content'):
+                try:
+                    content = base64.b64decode(lyrics['content']).decode('utf-8')
+                    normalized = self.normalize_lyrics(content)
+                    print(f"Normalized lyrics length: {len(normalized)} chars")
+
+                    if "纯音乐，请欣赏" in normalized or "酷狗音乐  就是歌多" in normalized:
+                        print("Returning not found for instrumental track")
+                        return {
+                            'success': False,
+                            'error': f'No lyrics found for {title} by {artist}'
+                        }
+                    
+                    parsed_lyrics = self.parse_lrc_timestamps(normalized)
+                    print(f"Parsed {len(parsed_lyrics)} lyrics lines")
+
+                    if parsed_lyrics:
+                        return {
+                            'success': True,
+                            'lyrics': parsed_lyrics,
+                            'source': 'KuGou',
+                            'total_lines': len(parsed_lyrics)
+                        }
+                except Exception as e:
+                    print(f"Error processing lyrics: {e}")
+
+        print("No lyrics found after all attempts")
+        return {
+            'success': False,
+            'error': f'No lyrics found for {title} by {artist}'
+        }
 
 # Test examples
 # if __name__ == "__main__":

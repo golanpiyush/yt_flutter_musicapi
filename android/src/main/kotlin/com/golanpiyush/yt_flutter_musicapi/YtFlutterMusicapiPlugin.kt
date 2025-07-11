@@ -14,6 +14,10 @@ import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+
+
 
 // Data Classes
 data class SearchResult(
@@ -43,6 +47,22 @@ enum class AudioQuality {
 enum class ThumbnailQuality {
     LOW, MED, HIGH, VERY_HIGH
 }
+
+// Data class for lyrics line
+data class LyricsLine(
+    val timestamp: Long,  // in milliseconds
+    val text: String,
+    val timeFormatted: String
+)
+
+// Data class for lyrics response
+data class LyricsResponse(
+    val success: Boolean,
+    val lyrics: List<LyricsLine>?,
+    val source: String?,
+    val totalLines: Int?,
+    val error: String?
+)
 
 /** YtFlutterMusicapiPlugin */
 class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
@@ -74,11 +94,53 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
             initializePython()
         }
     }
+    fun debugPythonInitialization(): Map<String, Any?> {
+        return try {
+            val pythonStatus = Python.isStarted()
+            val sysModule = python?.getModule("sys")
+            
+            // Safe conversion of Python list to Kotlin list
+            val moduleNames = sysModule?.callAttr("modules")?.asMap()?.keys?.toList() ?: emptyList<String>()
+            
+            // Explicit type conversion for boolean check
+            val globalsearcherExists = python?.getModule("globalsearcher") != null
+
+            mapOf(
+                "pythonStarted" to pythonStatus,
+                "pythonModuleNames" to moduleNames,  // Now properly typed as List<String>
+                "globalsearcherExists" to globalsearcherExists
+            )
+        } catch (e: Exception) {
+            mapOf("error" to e.message)
+        }
+    }
+
+    fun inspectEnvironment(): Map<String, Any?> {
+        return try {
+            val sys = python?.getModule("sys")
+            val platform = python?.getModule("platform")
+            
+            // Explicit type conversions
+            val pythonPath: List<String> = sys?.callAttr("path")?.asList()?.map { it.toString() } ?: emptyList()
+            val chaquopyVersion = python?.getModule("chaquopy")?.callAttr("__version__")?.toString()
+            val platformInfo = platform?.callAttr("platform")?.toString()
+
+            mapOf(
+                "pythonPath" to pythonPath,  // Now properly typed as List<String>
+                "chaquopyVersion" to chaquopyVersion,
+                "platform" to platformInfo
+            )
+        } catch (e: Exception) {
+            mapOf("error" to e.message)
+        }
+    }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
+        logMethodCall(call)
         when (call.method) {
-            "getPlatformVersion" -> {
-                result.success("Android ${android.os.Build.VERSION.RELEASE}")
+            
+            "checkStatus" -> {
+                handleCheckStatus(result)
             }
             
             "initialize" -> {
@@ -102,6 +164,37 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
             }
         }
     }
+    private fun logMethodCall(call: MethodCall) {
+        Log.d(TAG, """
+            Method: ${call.method}
+            Args: ${call.arguments}
+            Python: ${python != null}
+            Module: ${pythonModule != null}
+            Searcher: ${musicSearcher != null}
+            """.trimIndent())
+    }
+
+    private fun handleCheckStatus(result: Result) {
+        coroutineScope.launch {
+            try {
+                if (pythonModule == null) {
+                    initializePython()
+                }
+            
+                val statusResult = pythonModule!!.callAttr("check_ytmusic_and_ytdlp_ready")
+                val statusMap = convertPythonDictToMap(statusResult)
+            
+                withContext(Dispatchers.Main) {
+                    result.success(statusMap)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Status check failed", e)
+                withContext(Dispatchers.Main) {
+                    result.error("STATUS_ERROR", "Failed to check status: ${e.message}", null)
+                }
+            }
+        }
+    }
 
     private fun initializePython() {
         try {
@@ -111,7 +204,7 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
             python = Python.getInstance()
             
             // Import the Python module
-            pythonModule = python?.getModule("ytmusic_api")
+            pythonModule = python?.getModule("globalsearcher")
             
             Log.d(TAG, "Python initialized successfully")
         } catch (e: Exception) {
@@ -165,147 +258,602 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
         }
     }
 
-    private fun handleSearchMusic(call: MethodCall, result: Result) {
-        coroutineScope.launch {
-            try {
-                val query = call.argument<String>("query")
-                    ?: throw IllegalArgumentException("Query is required")
-                
-                val limit = call.argument<Int>("limit") ?: 10
-                val thumbQuality = call.argument<String>("thumbQuality") ?: "VERY_HIGH"
-                val audioQuality = call.argument<String>("audioQuality") ?: "VERY_HIGH"
-                val includeAudioUrl = call.argument<Boolean>("includeAudioUrl") ?: true
-                val includeAlbumArt = call.argument<Boolean>("includeAlbumArt") ?: true
-                
-                if (musicSearcher == null) {
-                    throw IllegalStateException("YTMusic API not initialized. Call initialize() first.")
-                }
-                
-                // Convert enum strings to Python enum values
-                val pythonThumbQuality = getPythonThumbnailQuality(thumbQuality)
-                val pythonAudioQuality = getPythonAudioQuality(audioQuality)
-                
-                // Call Python method
-                val searchResults = musicSearcher!!.callAttr(
-                    "get_music_details",
-                    query,
-                    limit,
-                    pythonThumbQuality,
-                    pythonAudioQuality,
-                    includeAudioUrl,
-                    includeAlbumArt
-                )
-                
-                val resultList = mutableListOf<Map<String, Any?>>()
-                
-                // Process generator results
-                try {
-                    val iterator = searchResults.asIterable()
-                    for (item in iterator) {
-                        val songData = convertPythonDictToMap(item as PyObject)
-                        resultList.add(songData)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error processing search results", e)
-                    // Try alternative approach for generator
-                    val pyList = python!!.getBuiltins().callAttr("list", searchResults)
-                    val size = pyList.callAttr("__len__").toInt()
-                    for (i in 0 until size) {
-                        val item = pyList.callAttr("__getitem__", i)
-                        val songData = convertPythonDictToMap(item)
-                        resultList.add(songData)
-                    }
-                }
-                
-                withContext(Dispatchers.Main) {
-                    result.success(mapOf(
-                        "success" to true,
-                        "results" to resultList,
-                        "count" to resultList.size
-                    ))
-                }
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "Search failed", e)
-                withContext(Dispatchers.Main) {
-                    result.error("SEARCH_ERROR", "Search failed: ${e.message}", null)
-                }
-            }
-        }
-    }
 
-    private fun handleGetRelatedSongs(call: MethodCall, result: Result) {
-        coroutineScope.launch {
+    // DONE + WORKING AS INTENDED
+    private fun handleSearchMusic(call: MethodCall, result: Result) {
+    coroutineScope.launch {
+        try {
+            val query = call.argument<String>("query") 
+                ?: throw IllegalArgumentException("Query is required")
+            
+            val limit = call.argument<Int>("limit") ?: 10
+            val thumbQuality = call.argument<String>("thumbQuality") ?: "HIGH"
+            val audioQuality = call.argument<String>("audioQuality") ?: "HIGH"
+            val includeAudioUrl = call.argument<Boolean>("includeAudioUrl") ?: true
+            val includeAlbumArt = call.argument<Boolean>("includeAlbumArt") ?: true
+            
+            if (musicSearcher == null) {
+                throw IllegalStateException("YTMusic API not initialized. Call initialize() first.")
+            }
+            
+            val pythonThumbQuality = getPythonThumbnailQuality(thumbQuality)
+            val pythonAudioQuality = getPythonAudioQuality(audioQuality)
+            
+            Log.d(TAG, "Starting search with query: $query")
+            
+            val searchResults = musicSearcher!!.callAttr(
+                "get_music_details",
+                query,
+                limit,
+                pythonThumbQuality,
+                pythonAudioQuality,
+                includeAudioUrl,
+                includeAlbumArt
+            )
+            
+            Log.d(TAG, "Raw search results type: ${searchResults?.javaClass?.simpleName}")
+            
+            val resultList = mutableListOf<Map<String, Any?>>()
+            
             try {
-                val songName = call.argument<String>("songName")
-                    ?: throw IllegalArgumentException("Song name is required")
+                // Convert generator to list first
+                val pythonList = python?.getBuiltins()?.callAttr("list", searchResults)
                 
-                val artistName = call.argument<String>("artistName")
-                    ?: throw IllegalArgumentException("Artist name is required")
-                
-                val limit = call.argument<Int>("limit") ?: 10
-                val thumbQuality = call.argument<String>("thumbQuality") ?: "VERY_HIGH"
-                val audioQuality = call.argument<String>("audioQuality") ?: "VERY_HIGH"
-                val includeAudioUrl = call.argument<Boolean>("includeAudioUrl") ?: true
-                val includeAlbumArt = call.argument<Boolean>("includeAlbumArt") ?: true
-                
-                if (relatedFetcher == null) {
-                    throw IllegalStateException("YTMusic API not initialized. Call initialize() first.")
-                }
-                
-                // Convert enum strings to Python enum values
-                val pythonThumbQuality = getPythonThumbnailQuality(thumbQuality)
-                val pythonAudioQuality = getPythonAudioQuality(audioQuality)
-                
-                // Call Python method
-                val relatedResults = relatedFetcher!!.callAttr(
-                    "getRelated",
-                    songName,
-                    artistName,
-                    limit,
-                    pythonThumbQuality,
-                    pythonAudioQuality,
-                    includeAudioUrl,
-                    includeAlbumArt
-                )
-                
-                val resultList = mutableListOf<Map<String, Any?>>()
-                
-                // Process generator results
-                try {
-                    val iterator = relatedResults.asIterable()
-                    for (item in iterator) {
-                        val songData = convertPythonDictToMap(item as PyObject)
-                        resultList.add(songData)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error processing related results", e)
-                    // Try alternative approach for generator
-                    val pyList = python!!.getBuiltins().callAttr("list", relatedResults)
-                    val size = pyList.callAttr("__len__").toInt()
+                if (pythonList != null) {
+                    val size = pythonList.callAttr("__len__").toInt()
+                    Log.d(TAG, "Processing $size search results")
+                    
                     for (i in 0 until size) {
-                        val item = pyList.callAttr("__getitem__", i)
-                        val songData = convertPythonDictToMap(item)
-                        resultList.add(songData)
+                        try {
+                            val item = pythonList.callAttr("__getitem__", i)
+                            Log.d(TAG, "Processing search result $i: ${item.toString()}")
+                            
+                            val songData = convertPythonDictToMap(item)
+                            
+                            // Create standardized result
+                            val processedResult = mapOf(
+                                "title" to (songData["title"]?.toString() ?: "Unknown Title"),
+                                "artists" to (songData["artists"]?.toString() ?: "Unknown Artist"),
+                                "videoId" to (songData["videoId"]?.toString() ?: ""),
+                                "duration" to songData["duration"]?.toString(),
+                                "year" to songData["year"]?.toString(),
+                                "albumArt" to songData["albumArt"]?.toString(),
+                                "audioUrl" to songData["audioUrl"]?.toString()
+                            )
+                            
+                            resultList.add(processedResult)
+                            Log.d(TAG, "Added search result: ${processedResult["title"]} by ${processedResult["artists"]}")
+                            
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing search result $i", e)
+                        }
                     }
                 }
-                
-                withContext(Dispatchers.Main) {
-                    result.success(mapOf(
-                        "success" to true,
-                        "results" to resultList,
-                        "count" to resultList.size
-                    ))
-                }
-                
             } catch (e: Exception) {
-                Log.e(TAG, "Get related songs failed", e)
-                withContext(Dispatchers.Main) {
-                    result.error("RELATED_ERROR", "Get related songs failed: ${e.message}", null)
-                }
+                Log.e(TAG, "Error processing search results list", e)
+            }
+            
+            Log.d(TAG, "Returning ${resultList.size} search results")
+            
+            withContext(Dispatchers.Main) {
+                result.success(mapOf(
+                    "success" to true,
+                    "data" to resultList,
+                    "count" to resultList.size
+                ))
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Search failed", e)
+            withContext(Dispatchers.Main) {
+                result.error("SEARCH_ERROR", "Search failed: ${e.message}", null)
             }
         }
     }
+}
+
+    // DONE + WORKING AS INTENDED
+    private fun handleGetRelatedSongs(call: MethodCall, result: Result) {
+    coroutineScope.launch {
+        try {
+            val songName = call.argument<String>("songName")
+                ?: throw IllegalArgumentException("Song name is required")
+            val artistName = call.argument<String>("artistName")
+                ?: throw IllegalArgumentException("Artist name is required")
+            
+            val limit = call.argument<Int>("limit") ?: 10
+            val thumbQuality = call.argument<String>("thumbQuality") ?: "HIGH"
+            val audioQuality = call.argument<String>("audioQuality") ?: "HIGH"
+            val includeAudioUrl = call.argument<Boolean>("includeAudioUrl") ?: true
+            val includeAlbumArt = call.argument<Boolean>("includeAlbumArt") ?: true
+            
+            if (relatedFetcher == null) {
+                throw IllegalStateException("YTMusic API not initialized. Call initialize() first.")
+            }
+            
+            val pythonThumbQuality = getPythonThumbnailQuality(thumbQuality)
+            val pythonAudioQuality = getPythonAudioQuality(audioQuality)
+            
+            Log.d(TAG, "Getting related songs for: $songName by $artistName")
+            
+            val relatedResults = relatedFetcher!!.callAttr(
+                "getRelated",
+                songName,
+                artistName,
+                limit,
+                pythonThumbQuality,
+                pythonAudioQuality,
+                includeAudioUrl,
+                includeAlbumArt
+            )
+            
+            Log.d(TAG, "Raw related results type: ${relatedResults?.javaClass?.simpleName}")
+            
+            val resultList = mutableListOf<Map<String, Any?>>()
+            
+            try {
+                val pythonList = python?.getBuiltins()?.callAttr("list", relatedResults)
+                
+                if (pythonList != null) {
+                    val size = pythonList.callAttr("__len__").toInt()
+                    Log.d(TAG, "Processing $size related songs")
+                    
+                    for (i in 0 until size) {
+                        try {
+                            val item = pythonList.callAttr("__getitem__", i)
+                            Log.d(TAG, "Processing related song $i: ${item.toString()}")
+                            
+                            val songData = convertPythonDictToMap(item)
+                            
+                            // Create standardized result
+                            val processedResult = mapOf(
+                                "title" to (songData["title"]?.toString() ?: "Unknown Title"),
+                                "artists" to (songData["artists"]?.toString() ?: "Unknown Artist"),
+                                "videoId" to (songData["videoId"]?.toString() ?: ""),
+                                "duration" to songData["duration"]?.toString(),
+                                "year" to songData["year"]?.toString(),
+                                "albumArt" to songData["albumArt"]?.toString(),
+                                "audioUrl" to songData["audioUrl"]?.toString(),
+                                "isOriginal" to when (songData["isOriginal"]) {
+                                    true, "True", "true" -> true
+                                    false, "False", "false" -> false
+                                    else -> false
+                                }
+                            )
+                            
+                            resultList.add(processedResult)
+                            Log.d(TAG, "Added related song: ${processedResult["title"]} by ${processedResult["artists"]}")
+                            
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing related song $i", e)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing related songs list", e)
+            }
+            
+            Log.d(TAG, "Returning ${resultList.size} related songs")
+            
+            withContext(Dispatchers.Main) {
+                result.success(mapOf(
+                    "success" to true,
+                    "data" to resultList,
+                    "count" to resultList.size
+                ))
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Get related songs failed", e)
+            withContext(Dispatchers.Main) {
+                result.error("RELATED_ERROR", "Get related songs failed: ${e.message}", null)
+            }
+        }
+    }
+}
+
+// // Update the handleGetLyrics function to provide better error handling
+// private fun handleGetLyrics(call: MethodCall, result: Result) {
+//     coroutineScope.launch {
+//         try {
+//             val title = call.argument<String>("title") 
+//                 ?: throw IllegalArgumentException("Title is required")
+//             val artist = call.argument<String>("artist") 
+//                 ?: throw IllegalArgumentException("Artist is required")
+//             val duration = call.argument<Int>("duration") ?: -1
+
+//             if (pythonModule == null) {
+//                 initializePython()
+//                 if (pythonModule == null) {
+//                     throw IllegalStateException("Python environment not initialized")
+//                 }
+//             }
+
+//             val lyricsProvider = instanceCache.getOrPut("lyrics_provider") {
+//                 pythonModule!!.callAttr("DynamicLyricsProvider")
+//             }
+
+//             Log.d(TAG, "Fetching lyrics for: $title by $artist")
+
+//             val lyricsResult = lyricsProvider.callAttr(
+//                 "fetch_lyrics",
+//                 title,
+//                 artist,
+//                 duration
+//             )
+
+//             Log.d(TAG, "Raw lyrics result: ${lyricsResult.toString()}")
+
+//             val response = convertLyricsResponse(lyricsResult)
+            
+//             Log.d(TAG, "Converted lyrics response - Success: ${response.success}, Lines: ${response.lyrics?.size}")
+
+//             withContext(Dispatchers.Main) {
+//                 result.success(response.toMap())
+//             }
+
+//         } catch (e: Exception) {
+//             Log.e(TAG, "Failed to get lyrics", e)
+//             withContext(Dispatchers.Main) {
+//                 result.error(
+//                     "LYRICS_ERROR",
+//                     "Failed to get lyrics: ${e.message}",
+//                     mapOf(
+//                         "success" to false,
+//                         "error" to (e.message ?: "Unknown error")
+//                     )
+//                 )
+//             }
+//         }
+//     }
+// }
+
+// // IMPROVED: convertLyricsResponse function
+// private fun convertLyricsResponse(pyObject: PyObject?): LyricsResponse {
+//     if (pyObject == null) {
+//         return LyricsResponse(
+//             success = false,
+//             lyrics = null,
+//             source = null,
+//             totalLines = null,
+//             error = "Null response from Python"
+//         )
+//     }
+
+//     try {
+//         Log.d(TAG, "Converting lyrics response")
+//         val responseMap = convertPythonDictToMap(pyObject)
+//         Log.d(TAG, "Response map: $responseMap")
+
+//         // Handle success field - it could be Boolean or String
+//         val success = when (val successVal = responseMap["success"]) {
+//             is Boolean -> successVal
+//             is String -> successVal.equals("true", ignoreCase = true)
+//             else -> false
+//         }
+
+//         if (!success) {
+//             return LyricsResponse(
+//                 success = false,
+//                 lyrics = null,
+//                 source = responseMap["source"]?.toString(),
+//                 totalLines = null,
+//                 error = responseMap["error"]?.toString() ?: "Unknown error"
+//             )
+//         }
+
+//         // Process lyrics lines - FIXED HANDLING
+//         val lyricsList = mutableListOf<LyricsLine>()
+//         val lyricsData = responseMap["lyrics"]
+        
+//         if (lyricsData is List<*>) {
+//             Log.d(TAG, "Processing lyrics as Kotlin List with ${lyricsData.size} items")
+            
+//             for (item in lyricsData) {
+//                 // Handle both map representations and string representations
+//                 when {
+//                     item is Map<*, *> -> {
+//                         try {
+//                             processMapItem(item as Map<String, Any?>, lyricsList)
+//                         } catch (e: Exception) {
+//                             Log.e(TAG, "Error processing map item", e)
+//                         }
+//                     }
+//                     item is String -> {
+//                         try {
+//                             // Attempt to parse string representation as JSON
+//                             val map = parseJsonString(item)
+//                             map?.let { processMapItem(it, lyricsList) }
+//                         } catch (e: Exception) {
+//                             Log.e(TAG, "Error parsing string item", e)
+//                         }
+//                     }
+//                     else -> {
+//                         Log.w(TAG, "Unknown lyrics item type: ${item?.javaClass?.simpleName}")
+//                     }
+//                 }
+//             }
+//         } else if (lyricsData is PyObject) {
+//             Log.d(TAG, "Processing lyrics as PyObject")
+//             try {
+//                 val pythonList = python?.getBuiltins()?.callAttr("list", lyricsData)
+//                 if (pythonList != null) {
+//                     val size = pythonList.callAttr("__len__").toInt()
+//                     for (i in 0 until size) {
+//                         try {
+//                             val linePy = pythonList.callAttr("__getitem__", i)
+//                             val lineMap = convertPythonDictToMap(linePy)
+//                             processMapItem(lineMap, lyricsList)
+//                         } catch (e: Exception) {
+//                             Log.e(TAG, "Error processing lyrics line $i", e)
+//                         }
+//                     }
+//                 }
+//             } catch (e: Exception) {
+//                 Log.e(TAG, "Error processing PyObject lyrics", e)
+//             }
+//         }
+
+//         Log.d(TAG, "Processed ${lyricsList.size} lyrics lines")
+        
+//         return LyricsResponse(
+//             success = true,
+//             lyrics = lyricsList,
+//             source = responseMap["source"]?.toString(),
+//             totalLines = when (val total = responseMap["total_lines"]) {
+//                 is Int -> total
+//                 is Long -> total.toInt()
+//                 is String -> total.toIntOrNull() ?: lyricsList.size
+//                 else -> lyricsList.size
+//             },
+//             error = null
+//         )
+        
+//     } catch (e: Exception) {
+//         Log.e(TAG, "Error converting lyrics response", e)
+//         return LyricsResponse(
+//             success = false,
+//             lyrics = null,
+//             source = null,
+//             totalLines = null,
+//             error = "Error processing lyrics: ${e.message}"
+//         )
+//     }
+// }
+
+// private fun parseTimestamp(value: Any?): Long {
+//     return when (value) {
+//         is Long -> value
+//         is Int -> value.toLong()
+//         is Double -> value.toLong()
+//         is Float -> value.toLong()
+//         is String -> value.toLongOrNull() ?: 0L
+//         else -> 0L
+//     }
+// }
+
+// // NEW: Helper function to process lyrics from Kotlin List
+// private fun processLyricsList(lyricsData: List<*>, lyricsList: MutableList<LyricsLine>) {
+//     lyricsData.forEachIndexed { index, item ->
+//         try {
+//             when (item) {
+//                 is Map<*, *> -> {
+//                     val lineData = (item as? Map<*, *>)?.mapNotNull {
+//                         val key = it.key as? String ?: return@mapNotNull null
+//                         key to it.value
+//                     }?.toMap()
+
+//                     if (lineData != null) {
+//                         addLyricsLine(lineData, lyricsList)
+//                     } else {
+//                         Log.w(TAG, "Invalid map at index $index")
+//                     }
+//                 }
+//                 is PyObject -> {
+//                     val lineData = convertPythonDictToMap(item)
+//                     addLyricsLine(lineData, lyricsList)
+//                 }
+//                 else -> {
+//                     Log.w(TAG, "Unexpected lyrics item type at index $index: ${item?.javaClass?.simpleName}")
+//                 }
+//             }
+//         } catch (e: Exception) {
+//             Log.e(TAG, "Error processing lyrics line $index", e)
+//         }
+//     }
+// }
+
+
+// // NEW: Helper function to process lyrics from PyObject
+// private fun processLyricsPyObject(lyricsData: PyObject, lyricsList: MutableList<LyricsLine>) {
+//     try {
+//         val pythonList = python?.getBuiltins()?.callAttr("list", lyricsData)
+//         if (pythonList != null) {
+//             val size = pythonList.callAttr("__len__").toInt()
+//             Log.d(TAG, "Processing $size lyrics lines from PyObject")
+            
+//             for (i in 0 until size) {
+//                 try {
+//                     val item = pythonList.callAttr("__getitem__", i)
+//                     val lineData = convertPythonDictToMap(item)
+//                     addLyricsLine(lineData, lyricsList)
+//                 } catch (e: Exception) {
+//                     Log.e(TAG, "Error processing lyrics line $i", e)
+//                 }
+//             }
+//         }
+//     } catch (e: Exception) {
+//         Log.e(TAG, "Error processing PyObject lyrics", e)
+//     }
+// }
+
+// // NEW: Helper function to add a lyrics line
+// private fun addLyricsLine(lineData: Map<String, Any?>, lyricsList: MutableList<LyricsLine>) {
+//     val timestamp = when (val ts = lineData["timestamp"]) {
+//         is Long -> ts
+//         is Int -> ts.toLong()
+//         is String -> ts.toLongOrNull() ?: 0L
+//         else -> 0L
+//     }
+    
+//     val text = lineData["text"]?.toString() ?: ""
+//     val timeFormatted = lineData["time_formatted"]?.toString() 
+//         ?: formatTimestamp(timestamp)
+    
+//     if (text.isNotEmpty()) {
+//         lyricsList.add(
+//             LyricsLine(
+//                 timestamp = timestamp,
+//                 text = text,
+//                 timeFormatted = timeFormatted
+//             )
+//         )
+//         Log.d(TAG, "Added lyrics line: $text at $timeFormatted")
+//     }
+// }
+
+// NEW: Helper function to convert Python lists to Kotlin lists
+private fun convertPythonList(pyList: PyObject): List<Any?> {
+    val resultList = mutableListOf<Any?>()
+    
+    try {
+        // Convert to Python list if it's a generator or iterator
+        val pythonList = python?.getBuiltins()?.callAttr("list", pyList) ?: pyList
+        val size = pythonList.callAttr("__len__").toInt()
+        
+        Log.d(TAG, "Converting Python list with $size items")
+        
+        for (i in 0 until size) {
+            try {
+                val item = pythonList.callAttr("__getitem__", i)
+                val convertedItem = when {
+                    // If item is a dictionary, convert it recursively
+                    isDictLike(item) -> convertPythonDictToMap(item)
+                    // If item is a list, convert it recursively
+                    isPythonList(item) -> convertPythonList(item)
+                    // Otherwise, convert as regular value
+                    else -> convertPythonValue(item)
+                }
+                resultList.add(convertedItem)
+                Log.d(TAG, "Added list item $i: $convertedItem")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing list item $i", e)
+            }
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Error converting Python list", e)
+    }
+    
+    return resultList
+}
+
+private fun isDictLike(pyObject: PyObject): Boolean {
+    return try {
+        // Check if it has keys() method (dict-like)
+        pyObject.callAttr("keys")
+        true
+    } catch (e: Exception) {
+        false
+    }
+}
+
+// Helper function to check if a PyObject is a Python list - IMPROVED VERSION
+private fun isPythonList(pyObject: PyObject): Boolean {
+    return try {
+        // First check if it has __len__ and __getitem__ methods (list-like)
+        pyObject.callAttr("__len__")
+        pyObject.callAttr("__getitem__", 0)
+        true
+    } catch (e: Exception) {
+        try {
+            // Alternative check: use isinstance with list type
+            val pythonBuiltins = python?.getBuiltins()
+            val listType = pythonBuiltins?.get("list")
+            val tupleType = pythonBuiltins?.get("tuple")
+            
+            if (listType != null && tupleType != null) {
+                val isList = pythonBuiltins.callAttr("isinstance", pyObject, listType).toBoolean()
+                val isTuple = pythonBuiltins.callAttr("isinstance", pyObject, tupleType).toBoolean()
+                isList || isTuple
+            } else {
+                false
+            }
+        } catch (e2: Exception) {
+            // Final fallback: check string representation
+            val str = pyObject.toString()
+            (str.startsWith("[") && str.endsWith("]")) || 
+            (str.startsWith("(") && str.endsWith(")"))
+        }
+    }
+}
+
+
+// private fun processMapItem(lineMap: Map<String, Any?>, lyricsList: MutableList<LyricsLine>) {
+//     val timestamp = parseTimestamp(lineMap["timestamp"])
+//     val text = lineMap["text"]?.toString() ?: ""
+//     val timeFormatted = lineMap["time_formatted"]?.toString() 
+//         ?: formatTimestamp(timestamp)
+    
+//     if (text.isNotEmpty()) {
+//         lyricsList.add(
+//             LyricsLine(
+//                 timestamp = timestamp,
+//                 text = text,
+//                 timeFormatted = timeFormatted
+//             )
+//         )
+//     }
+// }
+
+private fun parseJsonString(jsonString: String): Map<String, Any?>? {
+    return try {
+        // Remove single quotes to make valid JSON
+        val cleanString = jsonString
+            .replace("'", "\"")
+            .replace("True", "true")
+            .replace("False", "false")
+        
+        val type = object : TypeToken<Map<String, Any>>() {}.type
+        Gson().fromJson(cleanString, type)
+    } catch (e: Exception) {
+        Log.e(TAG, "Error parsing JSON string", e)
+        null
+    }
+}
+
+private fun formatTimestamp(ms: Long): String {
+    val seconds = ms / 1000
+    val minutes = seconds / 60
+    val remainingSeconds = seconds % 60
+    val milliseconds = ms % 1000
+    return String.format("%02d:%02d.%03d", minutes, remainingSeconds, milliseconds)
+}
+
+// Extension function to convert LyricsResponse to Map for Flutter
+private fun LyricsResponse.toMap(): Map<String, Any?> {
+    return mapOf(
+        "success" to success,
+        "lyrics" to lyrics?.map { 
+            mapOf(
+                "timestamp" to it.timestamp,
+                "text" to it.text,
+                "timeFormatted" to it.timeFormatted
+            )
+        },
+        "source" to source,
+        "totalLines" to totalLines,
+        "error" to error
+    )
+}
+
+// Extension function for safe boolean conversion
+private fun String?.toBoolean(): Boolean {
+    return when (this?.lowercase()) {
+        "true" -> true
+        "false" -> false
+        else -> false
+    }
+}
 
     private fun handleDispose(result: Result) {
         try {
@@ -330,71 +878,239 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
     }
 
     private fun getPythonThumbnailQuality(quality: String): PyObject {
-        val thumbnailQualityEnum = pythonModule!!.callAttr("__getattribute__", "ThumbnailQuality")
-        return when (quality.uppercase()) {
-            "LOW" -> thumbnailQualityEnum.callAttr("__getattribute__", "LOW")
-            "MED" -> thumbnailQualityEnum.callAttr("__getattribute__", "MED")
-            "HIGH" -> thumbnailQualityEnum.callAttr("__getattribute__", "HIGH")
-            "VERY_HIGH" -> thumbnailQualityEnum.callAttr("__getattribute__", "VERY_HIGH")
-            else -> thumbnailQualityEnum.callAttr("__getattribute__", "VERY_HIGH")
-        }
+    val thumbnailQualityEnum = pythonModule?.get("ThumbnailQuality")
+        ?: throw IllegalStateException("ThumbnailQuality enum not found in Python module")
+
+    return when (quality.uppercase()) {
+        "LOW" -> thumbnailQualityEnum["LOW"] ?: throw IllegalStateException("LOW quality not found")
+        "MED" -> thumbnailQualityEnum["MED"] ?: throw IllegalStateException("MED quality not found")
+        "HIGH" -> thumbnailQualityEnum["HIGH"] ?: throw IllegalStateException("HIGH quality not found")
+        "VERY_HIGH" -> thumbnailQualityEnum["VERY_HIGH"] ?: throw IllegalStateException("VERY_HIGH quality not found")
+        else -> thumbnailQualityEnum["HIGH"] ?: throw IllegalStateException("Default quality not found")
     }
+}
 
     private fun getPythonAudioQuality(quality: String): PyObject {
-        val audioQualityEnum = pythonModule!!.callAttr("__getattribute__", "AudioQuality")
+        val audioQualityEnum = pythonModule?.get("AudioQuality")
+            ?: throw IllegalStateException("AudioQuality enum not found in Python module")
+
         return when (quality.uppercase()) {
-            "LOW" -> audioQualityEnum.callAttr("__getattribute__", "LOW")
-            "MED" -> audioQualityEnum.callAttr("__getattribute__", "MED")
-            "HIGH" -> audioQualityEnum.callAttr("__getattribute__", "HIGH")
-            "VERY_HIGH" -> audioQualityEnum.callAttr("__getattribute__", "VERY_HIGH")
-            else -> audioQualityEnum.callAttr("__getattribute__", "VERY_HIGH")
+            "LOW" -> audioQualityEnum["LOW"] ?: throw IllegalStateException("LOW quality not found")
+            "MED" -> audioQualityEnum["MED"] ?: throw IllegalStateException("MED quality not found")
+            "HIGH" -> audioQualityEnum["HIGH"] ?: throw IllegalStateException("HIGH quality not found")
+            "VERY_HIGH" -> audioQualityEnum["VERY_HIGH"] ?: throw IllegalStateException("VERY_HIGH quality not found")
+            else -> audioQualityEnum["HIGH"] ?: throw IllegalStateException("Default quality not found")
         }
     }
 
-    private fun convertPythonDictToMap(pythonDict: PyObject): Map<String, Any?> {
-        val map = mutableMapOf<String, Any?>()
+  // Update the convertPythonDictToMap function to handle lyrics responses better
+ private fun convertPythonDictToMap(pyObject: PyObject?): Map<String, Any?> {
+    if (pyObject == null) {
+        return emptyMap()
+    }
+
+    val resultMap = mutableMapOf<String, Any?>()
+    
+    try {
+        // Get keys as list
+        val keysList = python?.getBuiltins()?.callAttr("list", pyObject.callAttr("keys"))
         
-        try {
-            // Convert Python dict to Kotlin map - use items() method for proper iteration
-            val items = pythonDict.callAttr("items")
-            val itemsList = python!!.getBuiltins().callAttr("list", items)
-            val size = itemsList.callAttr("__len__").toInt()
+        if (keysList != null) {
+            val size = keysList.callAttr("__len__").toInt()
             
             for (i in 0 until size) {
-                val pair = itemsList.callAttr("__getitem__", i)
-                val key = pair.callAttr("__getitem__", 0).toString()
-                val value = pair.callAttr("__getitem__", 1)
-                
-                map[key] = when {
-                    value == null -> null
-                    value.toString() == "None" -> null
-                    else -> value.toString()
+                try {
+                    val key = keysList.callAttr("__getitem__", i).toString()
+                    val value = pyObject.callAttr("__getitem__", key)
+                    
+                    resultMap[key] = when {
+                        value == null -> null
+                        value.isNone -> null
+                        value.isTrue -> true
+                        value.isFalse -> false
+                        value.isString -> value.toString()
+                        value.isNumber -> {
+                            try {
+                                value.toLong()
+                            } catch (e: Exception) {
+                                try {
+                                    value.toDouble()
+                                } catch (e: Exception) {
+                                    value.toString()
+                                }
+                            }
+                        }
+                        else -> value.toString() // Fallback to string for complex objects
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error processing key at index $i", e)
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to convert Python dict to map", e)
-            // Fallback method - try direct key access
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Error converting Python dict to simple map", e)
+    }
+    
+    return resultMap
+}
+
+
+
+// Add these extension properties to your code
+private val PyObject.isNone: Boolean
+    get() = this.toString() == "None"
+
+private val PyObject.isTrue: Boolean
+    get() = this.toString() == "True"
+
+private val PyObject.isFalse: Boolean
+    get() = this.toString() == "False"
+
+private val PyObject.isString: Boolean
+    get() = try {
+        python?.getBuiltins()?.callAttr("isinstance", this, python?.getBuiltins()?.get("str"))?.toBoolean() ?: false
+    } catch (e: Exception) {
+        false
+    }
+
+private val PyObject.isNumber: Boolean
+    get() = try {
+        python?.getBuiltins()?.callAttr("isinstance", this, python?.getBuiltins()?.get("int"))?.toBoolean() ?: false ||
+        python?.getBuiltins()?.callAttr("isinstance", this, python?.getBuiltins()?.get("float"))?.toBoolean() ?: false
+    } catch (e: Exception) {
+        false
+    }
+
+    // Helper function to convert individual Python values
+private fun convertPythonValue(pyValue: PyObject): Any? {
+    return try {
+        val valueStr = pyValue.toString()
+        Log.d(TAG, "Converting Python value: $valueStr")
+        
+        when {
+            valueStr == "None" -> null
+            valueStr == "True" -> true
+            valueStr == "False" -> false
+            valueStr.startsWith("'") && valueStr.endsWith("'") -> 
+                valueStr.substring(1, valueStr.length - 1)
+            valueStr.startsWith("\"") && valueStr.endsWith("\"") -> 
+                valueStr.substring(1, valueStr.length - 1)
+            valueStr.toLongOrNull() != null -> valueStr.toLong()
+            valueStr.toDoubleOrNull() != null -> valueStr.toDouble()
+            isPythonList(pyValue) -> {
+                Log.d(TAG, "Converting Python list")
+                convertPythonList(pyValue)
+            }
+            isDictLike(pyValue) -> {
+                Log.d(TAG, "Converting nested Python dict")
+                convertPythonDictToMap(pyValue)
+            }
+            else -> valueStr
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Error converting Python value: ${pyValue.toString()}", e)
+        pyValue.toString()
+    }
+}
+
+
+// Update the convertPythonDictFallback function to handle lyrics fields
+private fun convertPythonDictFallback(pythonDict: PyObject): Map<String, Any?> {
+    val map = mutableMapOf<String, Any?>()
+    
+    try {
+        // Check for lyrics response fields
+        val lyricsResponseFields = listOf(
+            "success", "lyrics", "source", "total_lines", "error"
+        )
+        
+        // Check for standard search result fields
+        val searchResultFields = listOf(
+            "title", "artists", "videoId", "duration",
+            "year", "albumArt", "audioUrl"
+        )
+        
+        // Check for related song fields
+        val relatedSongFields = listOf(
+            "isOriginal"
+        )
+        
+        // Check for status fields
+        val statusFields = listOf(
+            "ytmusic_ready", "ytmusic_version",
+            "ytdlp_ready", "ytdlp_version", "message"
+        )
+        
+        // Check for individual lyrics line fields
+        val lyricsLineFields = listOf(
+            "timestamp", "text", "time_formatted"
+        )
+        
+        var foundAnyField = false
+        
+        // Handle all possible fields
+        val allFields = lyricsResponseFields + searchResultFields + relatedSongFields + statusFields + lyricsLineFields
+        
+        for (field in allFields) {
             try {
-                val keys = listOf("title", "artists", "videoId", "duration", "year", "albumArt", "audioUrl", "isOriginal")
-                for (key in keys) {
-                    try {
-                        val value = pythonDict.callAttr("__getitem__", key)
-                        map[key] = when {
-                            value == null -> null
-                            value.toString() == "None" -> null
-                            else -> value.toString()
+                val value = pythonDict.get(field)
+                if (value != null && value.toString() != "None") {
+                    foundAnyField = true
+                    map[field] = when {
+                        value.toString() == "True" -> true
+                        value.toString() == "False" -> false
+                        isPythonList(value) -> value // Keep lists as PyObject
+                        field == "timestamp" -> {
+                            // Handle timestamp conversion
+                            try {
+                                value.toString().toLongOrNull() ?: 0L
+                            } catch (e: Exception) {
+                                0L
+                            }
                         }
-                    } catch (keyError: Exception) {
-                        // Key doesn't exist, skip
+                        field == "total_lines" -> {
+                            // Handle total_lines conversion
+                            try {
+                                value.toString().toIntOrNull() ?: 0
+                            } catch (e: Exception) {
+                                0
+                            }
+                        }
+                        field == "isOriginal" -> {
+                            // Handle boolean conversion for isOriginal
+                            when (value.toString()) {
+                                "True", "true", "1" -> true
+                                "False", "false", "0" -> false
+                                else -> value.toString().toBoolean()
+                            }
+                        }
+                        else -> value.toString()
                     }
                 }
-            } catch (fallbackError: Exception) {
-                Log.e(TAG, "Fallback conversion also failed", fallbackError)
+            } catch (e: Exception) {
+                Log.d(TAG, "Field $field not found in Python dict: ${e.message}")
             }
         }
         
-        return map
+        if (foundAnyField) {
+            Log.d(TAG, "Converted using fallback method: $map")
+            return map
+        }
+        
+        // Final fallback: Try to string representation
+        Log.d(TAG, "All fallbacks failed, returning string representation")
+        return mapOf(
+            "raw_data" to pythonDict.toString(),
+            "error" to "Could not properly convert Python dict to map"
+        )
+    } catch (e: Exception) {
+        Log.e(TAG, "All conversion fallbacks failed", e)
+        return mapOf(
+            "error" to "Conversion failed: ${e.message}",
+            "raw_data" to pythonDict.toString()
+        )
     }
+}
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
@@ -439,5 +1155,3 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
 //     "includeAudioUrl" to true,
 //     "includeAlbumArt" to true
 // )
-
-

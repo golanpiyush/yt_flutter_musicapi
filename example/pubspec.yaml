@@ -16,6 +16,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  url_launcher:
 
   yt_flutter_musicapi:
     # When depending on this package from a real application you should use:

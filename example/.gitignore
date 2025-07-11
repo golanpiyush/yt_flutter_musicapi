@@ -8,7 +8,6 @@ flutter_plugins/
 
 /integration_test
 /test
-/test
 
 # Android
 /android/.gradle

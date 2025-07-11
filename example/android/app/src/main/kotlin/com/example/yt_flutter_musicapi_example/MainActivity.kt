@@ -1,4 +1,4 @@
-package com.golanpiyush.yt_flutter_musicapi_example
+package com.example.yt_flutter_musicapi_example
 
 import io.flutter.embedding.android.FlutterActivity
 
