@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.2]
 
 ### Fixed
-- Fixed an issue related to `searchMusic & getRelatedSongs` that would cause memory overflows...
+- Fixed an issue related to `searchMusic & getRelatedSongs` that would cause memory overflows.
 
 ### Added
 - More songs by a particular `artist` and getting related `artists`. (Not fully implemented!)

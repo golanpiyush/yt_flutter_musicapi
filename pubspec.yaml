@@ -1,6 +1,6 @@
 name: yt_flutter_musicapi
 description: A Flutter plugin for YouTube Music API that provides music search and related songs functionality using Python backend.
-version: 1.0.2
+version: 1.1.2
 homepage: https://github.com/golanpiyush/yt_flutter_musicapi
 repository: https://github.com/golanpiyush/yt_flutter_musicapi
 issue_tracker: https://github.com/golanpiyush/yt_flutter_musicapi/issues
