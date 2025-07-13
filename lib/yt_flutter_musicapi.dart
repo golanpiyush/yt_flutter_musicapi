@@ -194,6 +194,27 @@ class YtFlutterMusicapi {
     );
   }
 
+  /// Stream search results as they are found (experimental streaming support)
+  Stream<SearchResult> streamSearchResults({
+    required String query,
+    int limit = 10,
+    AudioQuality audioQuality = AudioQuality.veryHigh,
+    ThumbnailQuality thumbQuality = ThumbnailQuality.veryHigh,
+    bool includeAudioUrl = true,
+    bool includeAlbumArt = true,
+  }) {
+    final stream = YtFlutterMusicapiPlatform.instance.streamSearchResults(
+      query: query,
+      limit: limit,
+      audioQuality: audioQuality.value,
+      thumbQuality: thumbQuality.value,
+      includeAudioUrl: includeAudioUrl,
+      includeAlbumArt: includeAlbumArt,
+    );
+
+    return stream.map((item) => SearchResult.fromMap(item));
+  }
+
   /// Gets related songs for a given track
   Future<YTMusicResponse<List<RelatedSong>>> getRelatedSongs({
     required String songName,

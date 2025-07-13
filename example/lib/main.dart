@@ -356,6 +356,66 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
     }
   }
 
+  Future<void> _streamSearchResults() async {
+    if (_isLoading || !_isInitialized) {
+      _addToCliOutput('❌ API not initialized or busy');
+      return;
+    }
+
+    String query = _searchController.text.trim();
+    if (query.isEmpty) {
+      query = 'Alan Walker Faded'; // Fallback default
+      _searchController.text = query;
+    }
+
+    _addToCliOutput('📡 Streaming search results for: "$query"');
+    _addToCliOutput(
+      '📊 Settings: Limit=${AppSettings.limit}, Audio=${AppSettings.audioQuality.value}, Thumb=${AppSettings.thumbnailQuality.value}',
+    );
+
+    int received = 0;
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      await for (final map in _api.streamSearchResults(
+        query: query,
+        limit: AppSettings.limit,
+        audioQuality: AppSettings.audioQuality,
+        thumbQuality: AppSettings.thumbnailQuality,
+        includeAudioUrl: true,
+        includeAlbumArt: true,
+      )) {
+        final result = map;
+
+        received++;
+
+        _addToCliOutput('🎧 Streamed Result $received:');
+        _addToCliOutput('   Title: ${result.title}');
+        _addToCliOutput('   Artists: ${result.artists}');
+        _addToCliOutput('   Duration: ${result.duration ?? 'N/A'}');
+        _addToCliOutput('   Video ID: ${result.videoId}');
+        _addToCliOutput(
+          '   Album Art: ${result.albumArt != null ? 'Available' : 'N/A'}',
+        );
+        _addToCliOutput(
+          '   Audio URL: ${result.audioUrl != null ? 'Available' : 'N/A'}',
+        );
+        _addToCliOutput('   ---');
+
+        if (received >= AppSettings.limit) {
+          _addToCliOutput('⏹️ Streaming limit reached (${AppSettings.limit})');
+          break;
+        }
+      }
+
+      _addToCliOutput(
+        '✅ Stream finished: $received result(s) in ${stopwatch.elapsedMilliseconds}ms',
+      );
+    } catch (e) {
+      _addToCliOutput('❌ Streaming error: $e');
+    }
+  }
+
   Future<void> _getRelatedSongs() async {
     if (_isLoading || !_isInitialized) {
       _addToCliOutput('❌ API not initialized or is busy');
@@ -622,6 +682,11 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
                               backgroundColor: Colors.blue,
                               foregroundColor: Colors.white,
                             ),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: _streamSearchResults,
+                            icon: Icon(Icons.stream),
+                            label: Text('Stream Search'),
                           ),
                           ElevatedButton.icon(
                             icon: Icon(Icons.search),

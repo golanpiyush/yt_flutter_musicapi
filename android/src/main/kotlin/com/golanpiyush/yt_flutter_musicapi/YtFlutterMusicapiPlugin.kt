@@ -5,6 +5,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import io.flutter.plugin.common.EventChannel
 import kotlinx.coroutines.*
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
@@ -69,6 +70,8 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
     
     private lateinit var channel: MethodChannel
     private lateinit var context: Context
+    private lateinit var eventChannel: EventChannel
+    private var eventSink: EventChannel.EventSink? = null
     private var python: Python? = null
     private var pythonModule: PyObject? = null
     private var musicSearcher: PyObject? = null
@@ -88,12 +91,139 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, CHANNEL_NAME)
         channel.setMethodCallHandler(this)
         context = flutterPluginBinding.applicationContext
+
+        // Streaming EventChannels
+eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "yt_flutter_musicapi/stream")
+eventChannel.setStreamHandler(object : EventChannel.StreamHandler {
+    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+        Log.d(TAG, "Search stream started with arguments: $arguments")
         
-        // Initialize Python in background
+        // Store the event sink
+        eventSink = events
+
+        // Launch coroutine for streaming search
         coroutineScope.launch {
-            initializePython()
+            try {
+                // Parse arguments safely
+                val args = arguments as? Map<*, *> ?: run {
+                    Log.e(TAG, "Invalid arguments received: $arguments")
+                    withContext(Dispatchers.Main) {
+                        events?.error("INVALID_ARGS", "Invalid arguments format", null)
+                    }
+                    return@launch
+                }
+                
+                val query = args["query"] as? String ?: run {
+                    Log.e(TAG, "Query is null or invalid")
+                    withContext(Dispatchers.Main) {
+                        events?.error("INVALID_QUERY", "Query is required", null)
+                    }
+                    return@launch
+                }
+                
+                val limit = args["limit"] as? Int ?: 10
+                val thumbQuality = args["thumbQuality"] as? String ?: "HIGH"
+                val audioQuality = args["audioQuality"] as? String ?: "HIGH"
+                val includeAudioUrl = args["includeAudioUrl"] as? Boolean ?: true
+                val includeAlbumArt = args["includeAlbumArt"] as? Boolean ?: true
+
+                Log.d(TAG, "Starting stream search for: $query with limit: $limit")
+
+                if (musicSearcher == null) {
+                    Log.e(TAG, "Music searcher is null")
+                    withContext(Dispatchers.Main) {
+                        events?.error("SEARCHER_NULL", "Music searcher not initialized", null)
+                    }
+                    return@launch
+                }
+
+                // Create the Python generator
+                val generator = try {
+                    musicSearcher!!.callAttr(
+                        "get_music_details",
+                        query,
+                        limit,
+                        getPythonThumbnailQuality(thumbQuality),
+                        getPythonAudioQuality(audioQuality),
+                        includeAudioUrl,
+                        includeAlbumArt
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to create generator", e)
+                    withContext(Dispatchers.Main) {
+                        events?.error("GENERATOR_ERROR", "Failed to create generator: ${e.message}", null)
+                    }
+                    return@launch
+                }
+
+                Log.d(TAG, "Generator created successfully")
+
+                var itemCount = 0
+                
+                // Stream results one by one
+                while (true) {
+                    try {
+                        Log.d(TAG, "Calling generator.__next__() - item $itemCount")
+                        
+                        // Get next item from Python generator
+                        val next = generator.callAttr("__next__")
+                        Log.d(TAG, "Got next item from Python: ${next.toString()}")
+                        
+                        // Convert Python dict to Kotlin map
+                        val songData = convertPythonDictToMap(next)
+                        Log.d(TAG, "Converted song data: $songData")
+                        
+                        // Create the item to send to Flutter
+                        val item = mapOf(
+                            "title" to (songData["title"]?.toString() ?: "Unknown Title"),
+                            "artists" to (songData["artists"]?.toString() ?: "Unknown Artist"),
+                            "videoId" to (songData["videoId"]?.toString() ?: ""),
+                            "duration" to songData["duration"]?.toString(),
+                            "year" to songData["year"]?.toString(),
+                            "albumArt" to songData["albumArt"]?.toString(),
+                            "audioUrl" to songData["audioUrl"]?.toString()
+                        )
+                        
+                        Log.d(TAG, "Sending item to Flutter: ${item["title"]} by ${item["artists"]}")
+                        
+                        // IMPORTANT: Switch to main thread for EventChannel callbacks
+                        withContext(Dispatchers.Main) {
+                            events?.success(item)
+                        }
+                        
+                        itemCount++
+                        
+                        // Small delay to prevent overwhelming the stream
+                        delay(50)
+                        
+                    } catch (stop: Exception) {
+                        Log.d(TAG, "Generator finished or error after $itemCount items: ${stop.message}")
+                        // Send completion signal
+                        withContext(Dispatchers.Main) {
+                            events?.endOfStream()
+                        }
+                        break
+                    }
+                }
+                
+                Log.d(TAG, "Stream completed. Total items sent: $itemCount")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Search stream error", e)
+                // IMPORTANT: Switch to main thread for error callbacks
+                withContext(Dispatchers.Main) {
+                    events?.error("STREAM_ERROR", "Stream error: ${e.message}", null)
+                }
+            }
         }
     }
+
+    override fun onCancel(arguments: Any?) {
+        Log.d(TAG, "Search stream cancelled")
+        eventSink = null
+        // Cancel any ongoing coroutines if needed
+    }
+})}
     fun debugPythonInitialization(): Map<String, Any?> {
         return try {
             val pythonStatus = Python.isStarted()
@@ -150,7 +280,11 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
             "searchMusic" -> {
                 handleSearchMusic(call, result)
             }
-            
+
+            "startStreamingSearch" -> {
+                handleStartStreamingSearch(call, result)
+            }
+       
             "getRelatedSongs" -> {
                 handleGetRelatedSongs(call, result)
             }
@@ -258,6 +392,9 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
         }
     }
 
+    
+
+
 
     // DONE + WORKING AS INTENDED
     private fun handleSearchMusic(call: MethodCall, result: Result) {
@@ -351,6 +488,29 @@ class YtFlutterMusicapiPlugin: FlutterPlugin, MethodCallHandler {
         }
     }
 }
+
+
+
+// Update the handleStartStreamingSearch method:
+private fun handleStartStreamingSearch(call: MethodCall, result: Result) {
+    Log.d(TAG, "handleStartStreamingSearch called")
+    
+    // Extract arguments and validate
+    val query = call.argument<String>("query")
+    if (query.isNullOrEmpty()) {
+        result.error("INVALID_QUERY", "Query is required", null)
+        return
+    }
+    
+    // This method just confirms the call was received
+    // The actual streaming happens in the EventChannel.StreamHandler
+    result.success(mapOf(
+        "started" to true,
+        "message" to "Streaming search will start when EventChannel is listened to",
+        "query" to query
+    ))
+}
+
 
     // DONE + WORKING AS INTENDED
     private fun handleGetRelatedSongs(call: MethodCall, result: Result) {
@@ -878,28 +1038,44 @@ private fun String?.toBoolean(): Boolean {
     }
 
     private fun getPythonThumbnailQuality(quality: String): PyObject {
-    val thumbnailQualityEnum = pythonModule?.get("ThumbnailQuality")
-        ?: throw IllegalStateException("ThumbnailQuality enum not found in Python module")
+        return try {
+            val thumbnailQualityEnum = pythonModule?.get("ThumbnailQuality")
+                ?: throw IllegalStateException("ThumbnailQuality enum not found in Python module")
 
-    return when (quality.uppercase()) {
-        "LOW" -> thumbnailQualityEnum["LOW"] ?: throw IllegalStateException("LOW quality not found")
-        "MED" -> thumbnailQualityEnum["MED"] ?: throw IllegalStateException("MED quality not found")
-        "HIGH" -> thumbnailQualityEnum["HIGH"] ?: throw IllegalStateException("HIGH quality not found")
-        "VERY_HIGH" -> thumbnailQualityEnum["VERY_HIGH"] ?: throw IllegalStateException("VERY_HIGH quality not found")
-        else -> thumbnailQualityEnum["HIGH"] ?: throw IllegalStateException("Default quality not found")
+            when (quality.uppercase()) {
+                "LOW" -> thumbnailQualityEnum["LOW"] ?: throw IllegalStateException("LOW quality not found")
+                "MED" -> thumbnailQualityEnum["MED"] ?: throw IllegalStateException("MED quality not found")
+                "HIGH" -> thumbnailQualityEnum["HIGH"] ?: throw IllegalStateException("HIGH quality not found")
+                "VERY_HIGH" -> thumbnailQualityEnum["VERY_HIGH"] ?: throw IllegalStateException("VERY_HIGH quality not found")
+                else -> {
+                    Log.w(TAG, "Unknown thumbnail quality: $quality, using HIGH")
+                    thumbnailQualityEnum["HIGH"] ?: throw IllegalStateException("Default quality not found")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting Python thumbnail quality for: $quality", e)
+            throw e
+        }
     }
-}
 
     private fun getPythonAudioQuality(quality: String): PyObject {
-        val audioQualityEnum = pythonModule?.get("AudioQuality")
-            ?: throw IllegalStateException("AudioQuality enum not found in Python module")
+        return try {
+            val audioQualityEnum = pythonModule?.get("AudioQuality")
+                ?: throw IllegalStateException("AudioQuality enum not found in Python module")
 
-        return when (quality.uppercase()) {
-            "LOW" -> audioQualityEnum["LOW"] ?: throw IllegalStateException("LOW quality not found")
-            "MED" -> audioQualityEnum["MED"] ?: throw IllegalStateException("MED quality not found")
-            "HIGH" -> audioQualityEnum["HIGH"] ?: throw IllegalStateException("HIGH quality not found")
-            "VERY_HIGH" -> audioQualityEnum["VERY_HIGH"] ?: throw IllegalStateException("VERY_HIGH quality not found")
-            else -> audioQualityEnum["HIGH"] ?: throw IllegalStateException("Default quality not found")
+            when (quality.uppercase()) {
+                "LOW" -> audioQualityEnum["LOW"] ?: throw IllegalStateException("LOW quality not found")
+                "MED" -> audioQualityEnum["MED"] ?: throw IllegalStateException("MED quality not found")
+                "HIGH" -> audioQualityEnum["HIGH"] ?: throw IllegalStateException("HIGH quality not found")
+                "VERY_HIGH" -> audioQualityEnum["VERY_HIGH"] ?: throw IllegalStateException("VERY_HIGH quality not found")
+                else -> {
+                    Log.w(TAG, "Unknown audio quality: $quality, using HIGH")
+                    audioQualityEnum["HIGH"] ?: throw IllegalStateException("Default quality not found")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting Python audio quality for: $quality", e)
+            throw e
         }
     }
 

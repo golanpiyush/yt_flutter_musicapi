@@ -41,6 +41,17 @@ abstract class YtFlutterMusicapiPlatform extends PlatformInterface {
     throw UnimplementedError('searchMusic() has not been implemented.');
   }
 
+  Stream<Map<String, dynamic>> streamSearchResults({
+    required String query,
+    int limit = 10,
+    String thumbQuality = 'VERY_HIGH',
+    String audioQuality = 'VERY_HIGH',
+    bool includeAudioUrl = true,
+    bool includeAlbumArt = true,
+  }) {
+    throw UnimplementedError('streamSearchResults() has not been implemented.');
+  }
+
   Future<Map<String, dynamic>> getRelatedSongs({
     required String songName,
     required String artistName,
