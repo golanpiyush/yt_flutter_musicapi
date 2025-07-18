@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.1.5]
+## [3.0.0]
 
 ### Added
 - Support of fetching Artist Songs `requires artistName="Obviously"`
@@ -43,17 +43,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved backpressure handling for slow clients
 
 ### Breaking Changes
-streamArtistSongs now requires explicit cancellation handling
 
-Generator-based APIs may throw StopIteration exceptions
+- `(New)streamArtistSongs` now requires explicit cancellation handling
 
-Stream order is no longer guaranteed to match original API
+- Generator-based APIs may throw StopIteration exceptions
+
+- Stream order is no longer guaranteed to match original API
+
 ### Migration Notes
-Clients should implement proper stream cancellation
 
-Batch processing now requires explicit collection of stream items
+- Clients should implement proper stream cancellation
 
-Error handling should account for mid-stream failures
+- Batch processing now requires explicit collection of stream items of this package!
+
+- Error handling should account for mid-stream failures
 
 ## [2.1.5]
 
