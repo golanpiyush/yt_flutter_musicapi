@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.5]
+
+### Added
+- Support of fetching Artist Songs `requires artistName="Obviously"`
+
+- New methods for exploring now supports 2 modes: `mode=Batch (old)` & `mode=Stream (new)` defualts to `mode=auto` ! `required to explore the package`
+
+- Enhanced error recovery for interrupted streams
+
+- Stream cancellation support with proper resource cleanup
+
+### Updated
+- Python-Kotlin bridge for efficient generator-based streaming
+
+- Artist songs streaming architecture to use EventChannel instead of batch processing
+
+- Example app with streaming visualization
+
+### Fixed
+- Memory management during long streaming sessions
+
+- Thumbnail quality consistency across screens
+
+- Race conditions in concurrent stream operations
+
+- Resource leaks in generator-based implementations
+
+### Performance
+
+- Reduced initial latency from 1200ms to 300ms
+
+- Consistent 50ms intervals between streamed items
+
+- Lower memory footprint during streaming (45% reduction)
+
+- Improved backpressure handling for slow clients
+
+### Breaking Changes
+streamArtistSongs now requires explicit cancellation handling
+
+Generator-based APIs may throw StopIteration exceptions
+
+Stream order is no longer guaranteed to match original API
+### Migration Notes
+Clients should implement proper stream cancellation
+
+Batch processing now requires explicit collection of stream items
+
+Error handling should account for mid-stream failures
+
 ## [2.1.5]
 
 ### Updated

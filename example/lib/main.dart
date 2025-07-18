@@ -29,9 +29,15 @@ class AppSettings {
   static AudioQuality audioQuality = AudioQuality.veryHigh;
   static ThumbnailQuality thumbnailQuality = ThumbnailQuality.veryHigh;
   static bool isDarkMode = false;
-  static Color cliColor = Colors.green;
-  static String relatedSongArtist = 'Ed Sheeran';
+  static String mode = 'auto'; // 'auto', 'batch', or 'stream'
+  static String artistName = 'Ed Sheeran';
+  static List<Map<String, String>> testSongs = [
+    {'title': 'Perfect', 'artist': 'Ed Sheeran'},
+    {'title': 'Bad Guy', 'artist': 'Billie Eilish'},
+    {'title': 'Blinding Lights', 'artist': 'The Weeknd'},
+  ];
   static String relatedSongTitle = 'Perfect';
+  static String relatedSongArtist = 'Ed Sheeran';
 }
 
 class Inspector {
@@ -61,8 +67,63 @@ class Inspector {
         _checkSearchResult(item);
       } else if (item is RelatedSong) {
         _checkRelatedSong(item);
+      } else if (item is ArtistSong) {
+        _checkArtistSong(item);
+      } else if (item is SongDetail) {
+        _checkSongDetail(item);
       }
     }
+  }
+
+  static void _checkArtistSong(ArtistSong song) {
+    print('  Title: ${song.title}');
+    print('  Artists: ${song.artists}');
+    print('  Video ID: ${song.videoId}');
+    print('  Duration: ${song.duration ?? 'N/A'}');
+    print('  Artist Name: ${song.artistName}');
+
+    if (song.albumArt != null) {
+      print(
+        '  ✅ Album Art: Available (${AppSettings.thumbnailQuality.value} quality)',
+      );
+    } else {
+      print('  ❌ Album Art: Missing');
+    }
+
+    if (song.audioUrl != null) {
+      print(
+        '  ✅ Audio URL: Available (${AppSettings.audioQuality.value} quality)',
+      );
+    } else {
+      print('  ❌ Audio URL: Missing');
+    }
+    print('  ---');
+  }
+
+  static void _checkSongDetail(SongDetail song) {
+    print('  Title: ${song.title}');
+    print('  Artists: ${song.artists}');
+    print('  Video ID: ${song.videoId}');
+    print('  Duration: ${song.duration ?? 'N/A'}');
+    print('  Year: ${song.year ?? 'N/A'}');
+    print('  Album: ${song.album ?? 'N/A'}');
+
+    if (song.albumArt != null) {
+      print(
+        '  ✅ Album Art: Available (${AppSettings.thumbnailQuality.value} quality)',
+      );
+    } else {
+      print('  ❌ Album Art: Missing');
+    }
+
+    if (song.audioUrl != null) {
+      print(
+        '  ✅ Audio URL: Available (${AppSettings.audioQuality.value} quality)',
+      );
+    } else {
+      print('  ❌ Audio URL: Missing');
+    }
+    print('  ---');
   }
 
   static void _checkSearchResult(SearchResult result) {
@@ -114,6 +175,18 @@ class Inspector {
     }
     print('  ---');
   }
+
+  static void checkSingleSongDetail(SongDetail? songDetail, String operation) {
+    print('🔍 INSPECTOR: Checking single song detail for $operation');
+
+    if (songDetail == null) {
+      print('❌ INSPECTOR: No song detail returned');
+      return;
+    }
+
+    print('📋 INSPECTOR: Song Detail:');
+    _checkSongDetail(songDetail);
+  }
 }
 
 class MusicApiTestPage extends StatefulWidget {
@@ -128,6 +201,7 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
   final TextEditingController _searchController = TextEditingController();
   bool _isInitialized = false;
   bool _isLoading = false;
+  final List<ArtistSong> _songs = [];
 
   @override
   void initState() {
@@ -144,7 +218,6 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
       );
     });
 
-    // Auto-scroll to bottom
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -212,17 +285,14 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
         _addToCliOutput('✅ API Status: OK');
         _addToCliOutput('📋 Message: ${status.message}');
 
-        // Show YTMusic status and version
         _addToCliOutput(
           '🎵 YTMusic: ${status.ytmusicReady ? '✅ Ready' : '❌ Not Ready'} (v${status.ytmusicVersion})',
         );
 
-        // Show yt-dlp status and version
         _addToCliOutput(
           '⬇️ yt-dlp: ${status.ytdlpReady ? '✅ Ready' : '❌ Not Ready'} (v${status.ytdlpVersion})',
         );
 
-        // Overall system status using the model's computed properties
         if (status.isFullyOperational) {
           _addToCliOutput('🚀 All systems operational and ready!');
           _addToCliOutput('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -246,7 +316,6 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
         _addToCliOutput('❌ API Status: Error');
         _addToCliOutput('📋 Message: ${response.message ?? 'Unknown status'}');
 
-        // Try to show partial status if available
         if (response.data != null) {
           final status = response.data!;
 
@@ -267,7 +336,6 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
     } catch (e) {
       _addToCliOutput('❌ Exception during status check: $e');
 
-      // Add troubleshooting hints
       _addToCliOutput('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       _addToCliOutput('💡 Troubleshooting Guide:');
       _addToCliOutput('   1. Check Python environment setup');
@@ -278,7 +346,6 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
       _addToCliOutput('   4. Test network connectivity');
       _addToCliOutput('   5. Check system logs for detailed errors');
 
-      // Log the full error for debugging
       print('Status check error details: $e');
     } finally {
       setState(() {
@@ -295,7 +362,7 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
 
     String query = _searchController.text.trim();
     if (query.isEmpty) {
-      query = 'Billie Eilish bad guy'; // Default search
+      query = 'Billie Eilish bad guy';
       _searchController.text = query;
     }
 
@@ -305,47 +372,49 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
 
     _addToCliOutput('🔍 Searching for: "$query"');
     _addToCliOutput(
-      '📊 Settings: Limit=${AppSettings.limit}, Audio=${AppSettings.audioQuality.value}, Thumb=${AppSettings.thumbnailQuality.value}',
+      '📊 Settings: Limit=${AppSettings.limit}, Audio=${AppSettings.audioQuality.value}, Thumb=${AppSettings.thumbnailQuality.value}, Mode=${AppSettings.mode}',
     );
 
     try {
-      final response = await _api.searchMusic(
-        query: query,
-        limit: AppSettings.limit,
-        audioQuality: AppSettings.audioQuality,
-        thumbQuality: AppSettings.thumbnailQuality,
-        includeAudioUrl: true,
-        includeAlbumArt: true,
-      );
-
-      if (response.success && response.data != null) {
-        _addToCliOutput('✅ Search completed successfully');
-        _addToCliOutput('📋 Found ${response.data!.length} results');
-
-        // Print detailed results
-        for (int i = 0; i < response.data!.length; i++) {
-          final result = response.data![i];
-          _addToCliOutput('🎵 Result ${i + 1}:');
-          _addToCliOutput('   Title: ${result.title}');
-          _addToCliOutput('   Artists: ${result.artists}');
-          _addToCliOutput('   Duration: ${result.duration ?? 'N/A'}');
-          _addToCliOutput('   Year: ${result.year ?? 'N/A'}');
-          _addToCliOutput('   Video ID: ${result.videoId}');
-          _addToCliOutput(
-            '   Album Art: ${result.albumArt != null ? 'Available and respected!' : 'N/A'}',
-          );
-          _addToCliOutput(
-            '   Audio URL: ${result.audioUrl != null ? 'Available and respected!' : 'N/A'}',
-          );
-          _addToCliOutput('   ---');
-        }
-
-        // Run inspector
-        Inspector.checkRules(response.data!, 'Search Music');
-        _addToCliOutput('🎉 SUCCESS: Search operation completed');
+      if (AppSettings.mode == 'stream') {
+        await _streamSearchResults(query: query);
       } else {
-        _addToCliOutput('❌ Search failed');
-        _addToCliOutput('📋 Error: ${response.error ?? 'Unknown error'}');
+        final response = await _api.searchMusic(
+          query: query,
+          limit: AppSettings.limit,
+          audioQuality: AppSettings.audioQuality,
+          thumbQuality: AppSettings.thumbnailQuality,
+          includeAudioUrl: true,
+          includeAlbumArt: true,
+        );
+
+        if (response.success && response.data != null) {
+          _addToCliOutput('✅ Search completed successfully');
+          _addToCliOutput('📋 Found ${response.data!.length} results');
+
+          for (int i = 0; i < response.data!.length; i++) {
+            final result = response.data![i];
+            _addToCliOutput('🎵 Result ${i + 1}:');
+            _addToCliOutput('   Title: ${result.title}');
+            _addToCliOutput('   Artists: ${result.artists}');
+            _addToCliOutput('   Duration: ${result.duration ?? 'N/A'}');
+            _addToCliOutput('   Year: ${result.year ?? 'N/A'}');
+            _addToCliOutput('   Video ID: ${result.videoId}');
+            _addToCliOutput(
+              '   Album Art: ${result.albumArt != null ? 'Available and respected!' : 'N/A'}',
+            );
+            _addToCliOutput(
+              '   Audio URL: ${result.audioUrl != null ? 'Available and respected!' : 'N/A'}',
+            );
+            _addToCliOutput('   ---');
+          }
+
+          Inspector.checkRules(response.data!, 'Search Music');
+          _addToCliOutput('🎉 SUCCESS: Search operation completed');
+        } else {
+          _addToCliOutput('❌ Search failed');
+          _addToCliOutput('📋 Error: ${response.error ?? 'Unknown error'}');
+        }
       }
     } catch (e) {
       _addToCliOutput('❌ Exception during search: $e');
@@ -356,28 +425,14 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
     }
   }
 
-  Future<void> _streamSearchResults() async {
-    if (_isLoading || !_isInitialized) {
-      _addToCliOutput('❌ API not initialized or busy');
-      return;
-    }
-
-    String query = _searchController.text.trim();
-    if (query.isEmpty) {
-      query = 'Alan Walker Faded'; // Fallback default
-      _searchController.text = query;
-    }
-
-    _addToCliOutput('📡 Streaming search results for: "$query"');
-    _addToCliOutput(
-      '📊 Settings: Limit=${AppSettings.limit}, Audio=${AppSettings.audioQuality.value}, Thumb=${AppSettings.thumbnailQuality.value}',
-    );
-
+  Future<void> _streamSearchResults({required String query}) async {
     int received = 0;
     final stopwatch = Stopwatch()..start();
 
+    _addToCliOutput('📡 Streaming search results for: "$query"');
+
     try {
-      await for (final map in _api.streamSearchResults(
+      await for (final result in _api.streamSearchResults(
         query: query,
         limit: AppSettings.limit,
         audioQuality: AppSettings.audioQuality,
@@ -385,10 +440,7 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
         includeAudioUrl: true,
         includeAlbumArt: true,
       )) {
-        final result = map;
-
         received++;
-
         _addToCliOutput('🎧 Streamed Result $received:');
         _addToCliOutput('   Title: ${result.title}');
         _addToCliOutput('   Artists: ${result.artists}');
@@ -416,9 +468,10 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
     }
   }
 
+  // Add this method to your _MusicApiTestPageState class
   Future<void> _getRelatedSongs() async {
     if (_isLoading || !_isInitialized) {
-      _addToCliOutput('❌ API not initialized or is busy');
+      _addToCliOutput('❌ API not initialized or busy');
       return;
     }
 
@@ -430,11 +483,67 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
       '🔍 Getting related songs for: "${AppSettings.relatedSongTitle}" by ${AppSettings.relatedSongArtist}',
     );
     _addToCliOutput(
-      '📊 Settings: Limit=${AppSettings.limit}, Audio=${AppSettings.audioQuality.value}, Thumb=${AppSettings.thumbnailQuality.value}',
+      '📊 Settings: Limit=${AppSettings.limit}, Audio=${AppSettings.audioQuality.value}, '
+      'Thumb=${AppSettings.thumbnailQuality.value}, Mode=${AppSettings.mode}',
     );
 
     try {
-      final response = await _api.getRelatedSongs(
+      if (AppSettings.mode == 'stream') {
+        await _streamRelatedSongs();
+      } else {
+        final response = await _api.getRelatedSongs(
+          songName: AppSettings.relatedSongTitle,
+          artistName: AppSettings.relatedSongArtist,
+          limit: AppSettings.limit,
+          audioQuality: AppSettings.audioQuality,
+          thumbQuality: AppSettings.thumbnailQuality,
+          includeAudioUrl: true,
+          includeAlbumArt: true,
+        );
+
+        if (response.success && response.data != null) {
+          _addToCliOutput('✅ Related songs retrieved successfully');
+          _addToCliOutput('📋 Found ${response.data!.length} related songs');
+
+          for (int i = 0; i < response.data!.length; i++) {
+            final song = response.data![i];
+            _addToCliOutput('🎵 Related Song ${i + 1}:');
+            _addToCliOutput('   Title: ${song.title}');
+            _addToCliOutput('   Artists: ${song.artists}');
+            _addToCliOutput('   Duration: ${song.duration ?? 'N/A'}');
+            _addToCliOutput('   Is Original: ${song.isOriginal}');
+            _addToCliOutput('   Video ID: ${song.videoId}');
+            _addToCliOutput(
+              '   Album Art: ${song.albumArt != null ? 'Available' : 'N/A'}',
+            );
+            _addToCliOutput(
+              '   Audio URL: ${song.audioUrl != null ? 'Available' : 'N/A'}',
+            );
+            _addToCliOutput('   ---');
+          }
+
+          Inspector.checkRules(response.data!, 'Related Songs');
+          _addToCliOutput('🎉 SUCCESS: Related songs operation completed');
+        } else {
+          _addToCliOutput('❌ Failed to get related songs');
+          _addToCliOutput('📋 Error: ${response.error ?? 'Unknown error'}');
+        }
+      }
+    } catch (e) {
+      _addToCliOutput('❌ Exception during related songs fetch: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _streamRelatedSongs() async {
+    int received = 0;
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      await for (final song in _api.streamRelatedSongs(
         songName: AppSettings.relatedSongTitle,
         artistName: AppSettings.relatedSongArtist,
         limit: AppSettings.limit,
@@ -442,39 +551,248 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
         thumbQuality: AppSettings.thumbnailQuality,
         includeAudioUrl: true,
         includeAlbumArt: true,
+      )) {
+        received++;
+        _addToCliOutput(
+          '🎵 Received related song $received in ${stopwatch.elapsedMilliseconds}ms:',
+        );
+        _addToCliOutput('   Title: ${song.title}');
+        _addToCliOutput('   Artists: ${song.artists}');
+        _addToCliOutput('   Duration: ${song.duration ?? 'N/A'}');
+        _addToCliOutput('   Is Original: ${song.isOriginal}');
+        _addToCliOutput('   Video ID: ${song.videoId}');
+        _addToCliOutput(
+          '   Album Art: ${song.albumArt != null ? 'Available' : 'N/A'}',
+        );
+        _addToCliOutput(
+          '   Audio URL: ${song.audioUrl != null ? 'Available' : 'N/A'}',
+        );
+        _addToCliOutput('   ---');
+
+        stopwatch.reset();
+      }
+
+      _addToCliOutput('✅ Streamed $received related songs successfully');
+    } catch (e) {
+      _addToCliOutput('❌ Exception during related songs stream: $e');
+    }
+  }
+
+  Future<void> _getArtistSongs() async {
+    if (_isLoading || !_isInitialized) {
+      _addToCliOutput('❌ API not initialized or busy');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _songs.clear();
+    });
+
+    _addToCliOutput(
+      '🎤 Getting songs from artist: "${AppSettings.artistName}"',
+    );
+    _addToCliOutput(
+      '📊 Settings: Limit=${AppSettings.limit}, '
+      'Audio=${AppSettings.audioQuality.value}, '
+      'Thumb=${AppSettings.thumbnailQuality.value}, '
+      'Mode=${AppSettings.mode}',
+    );
+
+    try {
+      if (AppSettings.mode == 'stream') {
+        await _streamArtistSongs();
+      } else {
+        final response = await _api.getArtistSongs(
+          artistName: AppSettings.artistName,
+          limit: AppSettings.limit,
+          audioQuality: AppSettings.audioQuality,
+          thumbQuality: AppSettings.thumbnailQuality,
+          includeAudioUrl: true,
+          includeAlbumArt: true,
+        );
+
+        if (response.success && response.data != null) {
+          _addToCliOutput('✅ Artist songs retrieved successfully');
+          _addToCliOutput('📋 Found ${response.data!.length} songs');
+
+          for (int i = 0; i < response.data!.length; i++) {
+            final song = response.data![i];
+            _addToCliOutput('🎵 Song ${i + 1}:');
+            _addToCliOutput('   Title: ${song.title}');
+            _addToCliOutput('   Artists: ${song.artists}');
+            _addToCliOutput('   Duration: ${song.duration ?? 'N/A'}');
+            _addToCliOutput('   Video ID: ${song.videoId}');
+            _addToCliOutput('   Artist Name: ${song.artistName}');
+            _addToCliOutput(
+              '   Album Art: ${song.albumArt != null ? 'Available' : 'N/A'}',
+            );
+            _addToCliOutput(
+              '   Audio URL: ${song.audioUrl != null ? 'Available' : 'N/A'}',
+            );
+            _addToCliOutput('   ---');
+
+            setState(() {
+              _songs.add(song);
+            });
+          }
+
+          Inspector.checkRules(response.data!, 'Artist Songs');
+          _addToCliOutput('🎉 SUCCESS: Artist songs operation completed');
+        } else {
+          _addToCliOutput('❌ Failed to get artist songs');
+          _addToCliOutput('📋 Error: ${response.error ?? 'Unknown error'}');
+        }
+      }
+    } catch (e) {
+      _addToCliOutput('❌ Exception during artist songs fetch: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _streamArtistSongs() async {
+    int received = 0;
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      await for (final song in _api.streamArtistSongs(
+        artistName: AppSettings.artistName,
+        limit: AppSettings.limit,
+        audioQuality: AppSettings.audioQuality,
+        thumbQuality: AppSettings.thumbnailQuality,
+        includeAudioUrl: true,
+        includeAlbumArt: true,
+      )) {
+        received++;
+        _addToCliOutput(
+          '🎵 Received song $received in ${stopwatch.elapsedMilliseconds}ms:',
+        );
+        _addToCliOutput('   Title: ${song.title}');
+        _addToCliOutput('   Artists: ${song.artists}');
+        _addToCliOutput('   Duration: ${song.duration ?? 'N/A'}');
+        _addToCliOutput('   Video ID: ${song.videoId}');
+        _addToCliOutput('   Artist Name: ${song.artistName}');
+        _addToCliOutput(
+          '   Album Art: ${song.albumArt != null ? 'Available' : 'N/A'}',
+        );
+        _addToCliOutput(
+          '   Audio URL: ${song.audioUrl != null ? 'Available' : 'N/A'}',
+        );
+        _addToCliOutput('   ---');
+
+        setState(() {
+          _songs.add(song);
+        });
+
+        stopwatch.reset();
+      }
+
+      if (received > 0) {
+        _addToCliOutput('✅ Streamed $received songs successfully');
+        Inspector.checkRules(_songs, 'Artist Songs');
+      } else {
+        _addToCliOutput('❌ No songs were streamed');
+      }
+    } catch (e) {
+      _addToCliOutput('❌ Exception during artist songs stream: $e');
+    }
+  }
+
+  Future<void> _getSongDetails() async {
+    if (_isLoading || !_isInitialized) {
+      _addToCliOutput('❌ API not initialized or busy');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    _addToCliOutput('🎵 Getting song details');
+    _addToCliOutput(
+      '📊 Settings: Mode=${AppSettings.mode}, Audio=${AppSettings.audioQuality.value}, Thumb=${AppSettings.thumbnailQuality.value}',
+    );
+    _addToCliOutput('📋 Test songs: ${AppSettings.testSongs.length} songs');
+
+    for (int i = 0; i < AppSettings.testSongs.length; i++) {
+      final song = AppSettings.testSongs[i];
+      _addToCliOutput('   ${i + 1}. "${song['title']}" by ${song['artist']}');
+    }
+
+    try {
+      final response = await _api.getSongDetails(
+        songs: AppSettings.testSongs,
+        mode: AppSettings.mode == 'batch' ? 'batch' : 'single',
+        audioQuality: AppSettings.audioQuality,
+        thumbQuality: AppSettings.thumbnailQuality,
+        includeAudioUrl: true,
+        includeAlbumArt: true,
       );
 
       if (response.success && response.data != null) {
-        _addToCliOutput('✅ Related songs retrieved successfully');
-        _addToCliOutput('📋 Found ${response.data!.length} related songs');
+        _addToCliOutput('✅ Song details retrieved successfully');
 
-        // Print detailed results
-        for (int i = 0; i < response.data!.length; i++) {
-          final song = response.data![i];
-          _addToCliOutput('🎵 Related Song ${i + 1}:');
-          _addToCliOutput('   Title: ${song.title}');
-          _addToCliOutput('   Artists: ${song.artists}');
-          _addToCliOutput('   Duration: ${song.duration ?? 'N/A'}');
-          _addToCliOutput('   Is Original: ${song.isOriginal}');
-          _addToCliOutput('   Video ID: ${song.videoId}');
-          _addToCliOutput(
-            '   Album Art: ${song.albumArt != null ? 'Available' : 'N/A'}',
-          );
-          _addToCliOutput(
-            '   Audio URL: ${song.audioUrl != null ? 'Available' : 'N/A'}',
-          );
-          _addToCliOutput('   ---');
+        if (AppSettings.mode != 'batch') {
+          final songDetail = response.data as SongDetail?;
+          if (songDetail != null) {
+            _addToCliOutput('📋 Single song detail retrieved:');
+            _addToCliOutput('🎵 Song Detail:');
+            _addToCliOutput('   Title: ${songDetail.title}');
+            _addToCliOutput('   Artists: ${songDetail.artists}');
+            _addToCliOutput('   Duration: ${songDetail.duration ?? 'N/A'}');
+            _addToCliOutput('   Video ID: ${songDetail.videoId}');
+            _addToCliOutput('   Year: ${songDetail.year ?? 'N/A'}');
+            _addToCliOutput('   Album: ${songDetail.album ?? 'N/A'}');
+            _addToCliOutput(
+              '   Album Art: ${songDetail.albumArt != null ? 'Available' : 'N/A'}',
+            );
+            _addToCliOutput(
+              '   Audio URL: ${songDetail.audioUrl != null ? 'Available' : 'N/A'}',
+            );
+            _addToCliOutput('   ---');
+
+            Inspector.checkSingleSongDetail(
+              songDetail,
+              'Song Details (Single)',
+            );
+          } else {
+            _addToCliOutput('❌ No song detail returned');
+          }
+        } else {
+          final songDetails = response.data as List<SongDetail>;
+          _addToCliOutput('📋 Found ${songDetails.length} detailed songs');
+
+          for (int i = 0; i < songDetails.length; i++) {
+            final song = songDetails[i];
+            _addToCliOutput('🎵 Song Detail ${i + 1}:');
+            _addToCliOutput('   Title: ${song.title}');
+            _addToCliOutput('   Artists: ${song.artists}');
+            _addToCliOutput('   Duration: ${song.duration ?? 'N/A'}');
+            _addToCliOutput('   Video ID: ${song.videoId}');
+            _addToCliOutput('   Year: ${song.year ?? 'N/A'}');
+            _addToCliOutput('   Album: ${song.album ?? 'N/A'}');
+            _addToCliOutput(
+              '   Album Art: ${song.albumArt != null ? 'Available' : 'N/A'}',
+            );
+            _addToCliOutput(
+              '   Audio URL: ${song.audioUrl != null ? 'Available' : 'N/A'}',
+            );
+            _addToCliOutput('   ---');
+          }
+
+          Inspector.checkRules(songDetails, 'Song Details (Batch)');
         }
 
-        // Run inspector
-        Inspector.checkRules(response.data!, 'Related Songs');
-        _addToCliOutput('🎉 SUCCESS: Related songs operation completed');
+        _addToCliOutput('🎉 SUCCESS: Song details operation completed');
       } else {
-        _addToCliOutput('❌ Failed to get related songs');
+        _addToCliOutput('❌ Failed to get song details');
         _addToCliOutput('📋 Error: ${response.error ?? 'Unknown error'}');
       }
     } catch (e) {
-      _addToCliOutput('❌ Exception during related songs fetch: $e');
+      _addToCliOutput('❌ Exception during song details fetch: $e');
     } finally {
       setState(() {
         _isLoading = false;
@@ -523,6 +841,7 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
           setState(() {});
           _addToCliOutput('⚙️ Settings updated');
         },
+        onClearCli: _clearCliOutput, // Add this line
       ),
     );
   }
@@ -561,20 +880,20 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
                         Text(
                           'CLI Output',
                           style: TextStyle(
-                            color: AppSettings.cliColor,
+                            color: Colors.green,
                             fontWeight: FontWeight.bold,
                             fontSize: 16,
                           ),
                         ),
                         Spacer(),
                         IconButton(
-                          icon: Icon(Icons.clear, color: AppSettings.cliColor),
+                          icon: Icon(Icons.clear, color: Colors.green),
                           onPressed: _clearCliOutput,
                           tooltip: 'Clear Output',
                         ),
                       ],
                     ),
-                    Divider(color: AppSettings.cliColor),
+                    Divider(color: Colors.green),
                     Expanded(
                       child: ListView.builder(
                         controller: _scrollController,
@@ -585,7 +904,7 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
                             child: Text(
                               _cliOutput[index],
                               style: TextStyle(
-                                color: AppSettings.cliColor,
+                                color: Colors.green,
                                 fontFamily: 'monospace',
                                 fontSize: 12,
                               ),
@@ -684,11 +1003,6 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
                             ),
                           ),
                           ElevatedButton.icon(
-                            onPressed: _streamSearchResults,
-                            icon: Icon(Icons.stream),
-                            label: Text('Stream Search'),
-                          ),
-                          ElevatedButton.icon(
                             icon: Icon(Icons.search),
                             label: Text('Search Music'),
                             onPressed: (_isLoading || !_isInitialized)
@@ -699,7 +1013,7 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
                               foregroundColor: Colors.white,
                             ),
                           ),
-
+                          // Add this button to your button grid (where you have other test buttons)
                           ElevatedButton.icon(
                             icon: Icon(Icons.queue_music),
                             label: Text('Related Songs'),
@@ -708,6 +1022,28 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
                                 : _getRelatedSongs,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.purple,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            icon: Icon(Icons.person),
+                            label: Text('Artist Songs'),
+                            onPressed: (_isLoading || !_isInitialized)
+                                ? null
+                                : _getArtistSongs,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.teal,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            icon: Icon(Icons.info_outline),
+                            label: Text('Song Details'),
+                            onPressed: (_isLoading || !_isInitialized)
+                                ? null
+                                : _getSongDetails,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.indigo,
                               foregroundColor: Colors.white,
                             ),
                           ),
@@ -745,8 +1081,13 @@ class _MusicApiTestPageState extends State<MusicApiTestPage> {
 
 class SettingsDialog extends StatefulWidget {
   final VoidCallback onSettingsChanged;
+  final VoidCallback onClearCli; // Add this line
 
-  SettingsDialog({required this.onSettingsChanged});
+  const SettingsDialog({
+    required this.onSettingsChanged,
+    required this.onClearCli, // Add this line
+    Key? key,
+  }) : super(key: key);
 
   @override
   _SettingsDialogState createState() => _SettingsDialogState();
@@ -757,20 +1098,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late AudioQuality _audioQuality;
   late ThumbnailQuality _thumbnailQuality;
   late bool _isDarkMode;
-  late Color _cliColor;
+  late String _mode;
   late TextEditingController _artistController;
-  late TextEditingController _titleController;
-
-  final List<Color> _cliColors = [
-    Colors.green,
-    Colors.blue,
-    Colors.orange,
-    Colors.purple,
-    Colors.red,
-    Colors.cyan,
-    Colors.yellow,
-    Colors.pink,
-  ];
 
   @override
   void initState() {
@@ -779,19 +1108,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _audioQuality = AppSettings.audioQuality;
     _thumbnailQuality = AppSettings.thumbnailQuality;
     _isDarkMode = AppSettings.isDarkMode;
-    _cliColor = AppSettings.cliColor;
-    _artistController = TextEditingController(
-      text: AppSettings.relatedSongArtist,
-    );
-    _titleController = TextEditingController(
-      text: AppSettings.relatedSongTitle,
-    );
+    _mode = AppSettings.mode;
+    _artistController = TextEditingController(text: AppSettings.artistName);
   }
 
   @override
   void dispose() {
     _artistController.dispose();
-    _titleController.dispose();
     super.dispose();
   }
 
@@ -818,6 +1141,61 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 },
               ),
             ),
+
+            // Add this to your SettingsDialog build method (inside the Column)
+            TextField(
+              controller: TextEditingController(
+                text: AppSettings.relatedSongTitle,
+              ),
+              decoration: InputDecoration(
+                labelText: 'Related Song Title',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) => AppSettings.relatedSongTitle = value,
+            ),
+            SizedBox(height: 8),
+            TextField(
+              controller: TextEditingController(
+                text: AppSettings.relatedSongArtist,
+              ),
+              decoration: InputDecoration(
+                labelText: 'Related Song Artist',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) => AppSettings.relatedSongArtist = value,
+            ),
+
+            // Mode Selection
+            ListTile(
+              title: Text('Operation Mode'),
+              subtitle: DropdownButton<String>(
+                value: _mode,
+                isExpanded: true,
+                items: ['auto', 'batch', 'stream'].map((mode) {
+                  return DropdownMenuItem(
+                    value: mode,
+                    child: Text(mode.toUpperCase()),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _mode = value;
+                    });
+                  }
+                },
+              ),
+            ),
+
+            // Artist Name Input
+            TextField(
+              controller: _artistController,
+              decoration: InputDecoration(
+                labelText: 'Artist Name for Testing',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            SizedBox(height: 8),
 
             // Audio Quality Setting
             ListTile(
@@ -862,6 +1240,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 },
               ),
             ),
+            SizedBox(height: 16),
+            ElevatedButton.icon(
+              icon: Icon(Icons.clear),
+              label: Text('Clear CLI Output'),
+              onPressed: () {
+                widget.onClearCli();
+                Navigator.of(context).pop();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.blueGrey,
+              ),
+            ),
 
             // Dark Mode Toggle
             SwitchListTile(
@@ -873,60 +1264,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 });
               },
             ),
-
-            // CLI Color Setting
-            ListTile(
-              title: Text('CLI Color'),
-              subtitle: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: _cliColors.map((color) {
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _cliColor = color;
-                        });
-                      },
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        margin: EdgeInsets.only(right: 8),
-                        decoration: BoxDecoration(
-                          color: color,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: _cliColor == color
-                                ? Colors.white
-                                : Colors.transparent,
-                            width: 3,
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            ),
-
-            // Related Song Settings
-            TextField(
-              controller: _artistController,
-              decoration: InputDecoration(
-                labelText: 'Related Song Artist',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            SizedBox(height: 8),
-            TextField(
-              controller: _titleController,
-              decoration: InputDecoration(
-                labelText: 'Related Song Title',
-                border: OutlineInputBorder(),
-              ),
-            ),
           ],
         ),
       ),
+
       actions: [
         TextButton(
           onPressed: () {
@@ -941,9 +1282,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
             AppSettings.audioQuality = _audioQuality;
             AppSettings.thumbnailQuality = _thumbnailQuality;
             AppSettings.isDarkMode = _isDarkMode;
-            AppSettings.cliColor = _cliColor;
-            AppSettings.relatedSongArtist = _artistController.text.trim();
-            AppSettings.relatedSongTitle = _titleController.text.trim();
+            AppSettings.mode = _mode;
+            AppSettings.artistName = _artistController.text.trim();
 
             widget.onSettingsChanged();
             Navigator.of(context).pop();

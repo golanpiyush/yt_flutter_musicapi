@@ -1,15 +1,14 @@
 import base64
 from enum import Enum
 import re
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Union
 import warnings
 import random
 import time
 import socket
 from urllib.error import URLError
-
 import requests
-
+import threading
 # Suppress warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -211,10 +210,7 @@ class YTMusicSearcher:
         return None
     
     def get_hq_album_art_from_ytdlp(self, video_id: str) -> Optional[str]:
-        """
-        Get high quality album art using yt-dlp from video metadata
-        Returns the highest quality album art URL available
-        """
+        """Get high quality album art using yt-dlp from video metadata"""
         try:
             ydl_opts = {
                 "quiet": True,
@@ -241,12 +237,7 @@ class YTMusicSearcher:
             )
             
             # First try to get album art from metadata
-            album_art_url = None
-            
-            # Check for album art in various metadata fields
-            if info.get('album_artist') and info.get('album'):
-                # Try to construct album art URL from metadata
-                album_art_url = self._get_album_art_from_metadata(info)
+            album_art_url = self._get_album_art_from_metadata(info)
             
             # If no album art from metadata, fall back to high quality thumbnails
             if not album_art_url:
@@ -287,9 +278,7 @@ class YTMusicSearcher:
             return None
 
     def _get_album_art_from_metadata(self, info: dict) -> Optional[str]:
-        """
-        Try to get album art from video metadata
-        """
+        """Try to get album art from video metadata"""
         try:
             # Check for album art in various metadata fields
             album_art_fields = ['album_art', 'album_artwork', 'artwork', 'cover']
@@ -311,9 +300,7 @@ class YTMusicSearcher:
             return None
 
     def get_youtube_music_album_art(self, video_id: str) -> Optional[str]:
-        """
-        Get album art specifically from YouTube Music metadata
-        """
+        """Get album art specifically from YouTube Music metadata"""
         try:
             # Use YTMusic to get song details which might have better album art
             song_info = self.ytmusic.get_song(video_id)
@@ -344,6 +331,99 @@ class YTMusicSearcher:
         except Exception as e:
             print(f"Error getting YouTube Music album art for {video_id}: {e}")
             return None
+
+    def _get_album_art_unified(self, video_id: str, song_data: dict, thumb_quality: ThumbnailQuality) -> str:
+        """Unified method to get album art with quality settings"""
+        album_art = ""
+        
+        if thumb_quality in [ThumbnailQuality.HIGH, ThumbnailQuality.VERY_HIGH]:
+            print(f"🖼️ Getting HQ album art for: {video_id}")
+            
+            # Method 1: Try YouTube Music specific album art
+            album_art = self.get_youtube_music_album_art(video_id)
+            
+            # Method 2: Try yt-dlp with album art focus
+            if not album_art:
+                album_art = self.get_hq_album_art_from_ytdlp(video_id)
+            
+            # Method 3: Fallback to song thumbnails
+            if not album_art:
+                print("🔄 Falling back to song thumbnails")
+                thumbnails = song_data.get("thumbnails", [])
+                if thumbnails:
+                    base_url = thumbnails[-1].get("url", "")
+                    if base_url:
+                        if thumb_quality == ThumbnailQuality.HIGH:
+                            album_art = re.sub(r'w\d+-h\d+', 'w320-h320', base_url)
+                        elif thumb_quality == ThumbnailQuality.VERY_HIGH:
+                            album_art = re.sub(r'w\d+-h\d+', 'w544-h544', base_url)
+                        else:
+                            album_art = base_url
+            
+            # Apply quality settings to HQ URLs if they contain YouTube image patterns
+            if album_art and any(pattern in album_art for pattern in ['googleusercontent.com', 'ytimg.com', 'youtube.com']):
+                if thumb_quality == ThumbnailQuality.HIGH:
+                    album_art = re.sub(r'w\d+-h\d+', 'w320-h320', album_art)
+                elif thumb_quality == ThumbnailQuality.VERY_HIGH:
+                    album_art = re.sub(r'w\d+-h\d+', 'w544-h544', album_art)
+        else:
+            # Use song thumbnails for LOW and MED quality
+            thumbnails = song_data.get("thumbnails", [])
+            if thumbnails:
+                base_url = thumbnails[-1].get("url", "")
+                if base_url:
+                    if thumb_quality == ThumbnailQuality.LOW:
+                        album_art = re.sub(r'w\d+-h\d+', 'w60-h60', base_url)
+                    elif thumb_quality == ThumbnailQuality.MED:
+                        album_art = re.sub(r'w\d+-h\d+', 'w120-h120', base_url)
+                    else:
+                        album_art = base_url
+        
+        print(f"🖼️ Album art URL: {album_art}")
+        return album_art
+
+    def _get_audio_url_with_retries(self, video_id: str, audio_quality: AudioQuality) -> Optional[str]:
+        """Unified method to get audio URL with retries"""
+        print(f"🎵 Getting audio URL for: {video_id}")
+        
+        for attempt in range(3):
+            try:
+                audio_url = self.get_audio_url(video_id, audio_quality)
+                if audio_url:
+                    print(f"✅ Got audio URL on attempt {attempt + 1}")
+                    return audio_url
+                else:
+                    print(f"⚠️ No audio URL on attempt {attempt + 1}")
+            except Exception as e:
+                print(f"❌ Audio URL attempt {attempt + 1} failed: {e}")
+            time.sleep(1)
+        
+        return None
+
+    def _build_song_data(self, video_id: str, title: str, artists: str, duration: str, 
+                        song_data: dict, thumb_quality: ThumbnailQuality, audio_quality: AudioQuality,
+                        include_audio_url: bool, include_album_art: bool, **extra_fields) -> dict:
+        """Unified method to build song data dictionary"""
+        result = {
+            "title": title,
+            "artists": artists,
+            "videoId": video_id,
+            "duration": duration,
+            **extra_fields
+        }
+        
+        # Get album art
+        if include_album_art:
+            album_art = self._get_album_art_unified(video_id, song_data, thumb_quality)
+            result["albumArt"] = album_art
+        
+        # Get audio URL
+        if include_audio_url:
+            audio_url = self._get_audio_url_with_retries(video_id, audio_quality)
+            if audio_url:
+                result["audioUrl"] = audio_url
+        
+        return result
 
     def get_music_details(
         self,
@@ -400,100 +480,27 @@ class YTMusicSearcher:
 
                 print(f"Basic info extracted - Title: {title}, Artists: {artists}")
 
-                album_art = ""
-                if include_album_art:
-                    if thumb_quality in [ThumbnailQuality.HIGH, ThumbnailQuality.VERY_HIGH]:
-                        print(f"Trying to get HQ album art for video ID: {video_id}")
-                        
-                        # Method 1: Try YouTube Music specific album art
-                        album_art = self.get_youtube_music_album_art(video_id)
-                        
-                        # Method 2: Try yt-dlp with album art focus
-                        if not album_art:
-                            album_art = self.get_hq_album_art_from_ytdlp(video_id)
-                        
-                        # Method 3: Fallback to YTMusic thumbnails
-                        if not album_art:
-                            print("Falling back to YTMusic thumbnails")
-                            thumbnails = item.get("thumbnails", [])
-                            if thumbnails:
-                                base_url = thumbnails[-1].get("url", "")
-                                if base_url:
-                                    import re
-                                    if thumb_quality == ThumbnailQuality.HIGH:
-                                        # w320-h320-l90-rj for high quality
-                                        album_art = re.sub(r'w\d+-h\d+', 'w320-h320', base_url)
-                                    elif thumb_quality == ThumbnailQuality.VERY_HIGH:
-                                        # w544-h544-l90-rj for very high quality
-                                        album_art = re.sub(r'w\d+-h\d+', 'w544-h544', base_url)
-                                    else:
-                                        album_art = base_url
-                        
-                        # Apply quality settings to HQ URLs if they contain YouTube image patterns
-                        if album_art and any(pattern in album_art for pattern in ['googleusercontent.com', 'ytimg.com', 'youtube.com']):
-                            import re
-                            if thumb_quality == ThumbnailQuality.HIGH:
-                                # Force HIGH quality resolution even for HQ sources
-                                album_art = re.sub(r'w\d+-h\d+', 'w320-h320', album_art)
-                            elif thumb_quality == ThumbnailQuality.VERY_HIGH:
-                                # Keep or set VERY_HIGH quality resolution
-                                album_art = re.sub(r'w\d+-h\d+', 'w544-h544', album_art)
-                    else:
-                        # Use YTMusic thumbnails for LOW and MED quality
-                        thumbnails = item.get("thumbnails", [])
-                        print(f"Found {len(thumbnails)} thumbnails from YTMusic")
-                        if thumbnails:
-                            base_url = thumbnails[-1].get("url", "")
-                            if base_url:
-                                import re
-                                if thumb_quality == ThumbnailQuality.LOW:
-                                    # w60-h60-l90-rj for lowest quality
-                                    album_art = re.sub(r'w\d+-h\d+', 'w60-h60', base_url)
-                                elif thumb_quality == ThumbnailQuality.MED:
-                                    # w120-h120-l90-rj for medium quality
-                                    album_art = re.sub(r'w\d+-h\d+', 'w120-h120', base_url)
-                                else:
-                                    album_art = base_url
-                            else:
-                                album_art = ""
-                        print(f"Album art URL: {album_art}")
-
-
-                audio_url = None
-                if include_audio_url:
-                    print(f"Getting audio URL for video ID: {video_id}")
-                    for attempt in range(3):
-                        try:
-                            audio_url = self.get_audio_url(video_id, audio_quality)
-                            if audio_url:
-                                print(f"Got audio URL on attempt {attempt + 1}")
-                                break
-                            else:
-                                print(f"No audio URL on attempt {attempt + 1}")
-                        except Exception as e:
-                            print(f"Audio URL attempt {attempt + 1} failed: {e}")
-                        time.sleep(1)
+                # Build song data using unified method
+                song_data = self._build_song_data(
+                    video_id=video_id,
+                    title=title,
+                    artists=artists,
+                    duration=duration,
+                    song_data=item,
+                    thumb_quality=thumb_quality,
+                    audio_quality=audio_quality,
+                    include_audio_url=include_audio_url,
+                    include_album_art=include_album_art,
+                    year=year
+                )
 
                 # Check if we should yield this result
-                should_yield = not include_audio_url or audio_url
-                print(f"Should yield: {should_yield} (include_audio_url: {include_audio_url}, audio_url: {audio_url is not None})")
+                should_yield = not include_audio_url or song_data.get("audioUrl")
+                print(f"Should yield: {should_yield} (include_audio_url: {include_audio_url}, audio_url: {song_data.get('audioUrl') is not None})")
 
                 if should_yield:
-                    song_data = {
-                        "title": title,
-                        "artists": artists,
-                        "videoId": video_id,
-                        "duration": duration,
-                        "year": year
-                    }
-                    if include_album_art:
-                        song_data["albumArt"] = album_art
-                    if include_audio_url:
-                        song_data["audioUrl"] = audio_url
-
                     processed_count += 1
                     print(f"Yielding song data {processed_count}: {song_data}")
-
                     yield song_data
                 else:
                     print(f"Skipping item {i + 1}: Could not get audio URL")
@@ -506,217 +513,327 @@ class YTMusicSearcher:
 
         print(f"Finished processing. Found {processed_count} valid results (skipped {skipped_count})")
 
+    def get_song_details(
+        self,
+        songs: List[Dict[str, str]],
+        thumb_quality: ThumbnailQuality = ThumbnailQuality.VERY_HIGH,
+        audio_quality: AudioQuality = AudioQuality.VERY_HIGH,
+        include_audio_url: bool = True,
+        include_album_art: bool = True,
+        mode: str = "batch"
+    ) -> Union[Generator[dict, None, None], Optional[dict]]:
+        """Get song details with flexible return type based on mode"""
+        if mode not in ["single", "batch"]:
+            raise ValueError("Mode must be either 'single' or 'batch'")
+
+        if mode == "single":
+            if not songs:
+                return None
+            
+            song = songs[0]
+            song_name = song.get("song_name", "")
+            artist_name = song.get("artist_name", "")
+            
+            if not song_name or not artist_name:
+                print("⚠️ Missing song_name or artist_name")
+                return None
+            
+            print(f"\n🔍 Processing single song: '{song_name}' by '{artist_name}'")
+            
+            try:
+                details = self._get_single_song_details(
+                    song_name=song_name,
+                    artist_name=artist_name,
+                    thumb_quality=thumb_quality,
+                    audio_quality=audio_quality,
+                    include_audio_url=include_audio_url,
+                    include_album_art=include_album_art
+                )
+                return details
+            except Exception as e:
+                print(f"❌ Error processing song '{song_name}': {str(e)}")
+                return None
+        else:
+            # Batch mode - return generator with yield
+            print(f"🎶 Processing batch of {len(songs)} songs")
+            return self._process_batch_songs(
+                songs=songs,
+                thumb_quality=thumb_quality,
+                audio_quality=audio_quality,
+                include_audio_url=include_audio_url,
+                include_album_art=include_album_art
+            )
+
+    def _get_single_song_details(
+        self,
+        song_name: str,
+        artist_name: str,
+        thumb_quality: ThumbnailQuality,
+        audio_quality: AudioQuality,
+        include_audio_url: bool,
+        include_album_art: bool
+    ) -> Optional[dict]:
+        """Internal method to get details for a single song"""
+        query = f"{song_name} {artist_name}"
+        video_id = None
+        song_data = None
+        
+        for attempt in range(3):
+            try:
+                results = self.ytmusic.search(query, filter="songs", limit=5)
+                
+                # Find best matching song
+                for item in results:
+                    title = item.get("title", "").lower()
+                    artists = [a.get("name", "").lower() for a in item.get("artists", [])]
+                    
+                    # Match both song name and artist
+                    if (all(word in title for word in song_name.lower().split()) and 
+                        any(artist_name.lower() in artist for artist in artists)):
+                        video_id = item.get("videoId")
+                        song_data = item
+                        break
+                
+                # If no exact match found, use first result
+                if not video_id and results:
+                    video_id = results[0].get("videoId")
+                    song_data = results[0]
+                
+                if video_id:
+                    break
+            except Exception as e:
+                print(f"❌ Search attempt {attempt + 1} failed: {e}")
+                if attempt == 2:
+                    return None
+                time.sleep(2 ** attempt)
+                self._initialize_ytmusic()
+        
+        if not video_id or not song_data:
+            print("❌ Song not found")
+            return None
+        
+        print(f"✅ Found song: {song_data.get('title')} (ID: {video_id})")
+        
+        # Extract basic info
+        title = song_data.get("title", "Unknown Title")
+        artists = ", ".join(a.get("name", "Unknown") for a in song_data.get("artists", [])) or "Unknown Artist"
+        duration = song_data.get("duration")
+        
+        # Build song data using unified method
+        result = self._build_song_data(
+            video_id=video_id,
+            title=title,
+            artists=artists,
+            duration=duration,
+            song_data=song_data,
+            thumb_quality=thumb_quality,
+            audio_quality=audio_quality,
+            include_audio_url=include_audio_url,
+            include_album_art=include_album_art
+        )
+        
+        return result
+    
+    def _process_batch_songs(
+        self,
+        songs: List[Dict[str, str]],
+        thumb_quality: ThumbnailQuality,
+        audio_quality: AudioQuality,
+        include_audio_url: bool,
+        include_album_art: bool
+    ) -> Generator[dict, None, None]:
+        """Internal method to process songs in batch mode"""
+        for i, song in enumerate(songs, 1):
+            song_name = song.get("song_name", "")
+            artist_name = song.get("artist_name", "")
+
+            if not song_name or not artist_name:
+                print(f"⚠️ Skipping item {i}: Missing song_name or artist_name")
+                continue
+
+            print(f"\n🔍 Processing song {i}/{len(songs)}: '{song_name}' by '{artist_name}'")
+
+            try:
+                details = self._get_single_song_details(
+                    song_name=song_name,
+                    artist_name=artist_name,
+                    thumb_quality=thumb_quality,
+                    audio_quality=audio_quality,
+                    include_audio_url=include_audio_url,
+                    include_album_art=include_album_art
+                )
+
+                if details:
+                    yield details
+                else:
+                    print(f"❌ Song not found: '{song_name}' by '{artist_name}'")
+
+            except Exception as e:
+                print(f"❌ Error processing song '{song_name}': {str(e)}")
+                continue
+
+            # Small delay between songs to avoid rate limiting
+            time.sleep(0.5)
+
+        print("✅ Batch processing completed")
+
     def get_artist_songs(
         self,
         artist_name: str,
         limit: int = 25,
-        thumb_quality: ThumbnailQuality = ThumbnailQuality.VERY_HIGH,
-        audio_quality: AudioQuality = AudioQuality.HIGH,
+        thumb_quality: str = "VERY_HIGH",
+        audio_quality: str = "HIGH",
         include_audio_url: bool = True,
         include_album_art: bool = True
-    ) -> Generator[dict, None, None]:
-        """
-        Get songs from a specific artist and stream them one by one as they become available.
+    ) -> Generator[Dict[str, Any], None, None]:
+        """Stream songs from a specific artist one by one"""
+        def log(message: str):
+            print(f"[ArtistSongs] {message}")
+
+        log(f"Starting streaming search for {artist_name} (limit: {limit})")
         
-        Args:
-            artist_name: Name of the artist to search for
-            limit: Maximum number of songs to return (default: 25)
-            thumb_quality: Quality of album art thumbnails
-            audio_quality: Quality of audio URLs
-            include_audio_url: Whether to include audio URLs
-            include_album_art: Whether to include album art URLs
-            
-        Yields:
-            dict: Song data containing title, artists, videoId, duration, audioUrl, albumArt
-        """
-        print(f"🎵 Starting artist songs search for: {artist_name}")
         processed_count = 0
-        skipped_count = 0
+        retry_count = 0
+        max_retries = 3
         
-        # Step 1: Search for the artist
-        artist_results = None
-        for attempt in range(3):
+        while retry_count < max_retries and processed_count < limit:
             try:
-                print(f"🔍 Attempt {attempt + 1} to search for artist: {artist_name}")
-                artist_results = self.ytmusic.search(artist_name, filter="artists", limit=5)
-                print(f"✅ Found {len(artist_results) if artist_results else 0} artist results")
-                break
-            except Exception as e:
-                print(f"❌ Artist search attempt {attempt + 1} failed: {e}")
-                if attempt == 2:
-                    print("💀 All artist search attempts failed, returning empty")
-                    return
-                time.sleep(2 ** attempt)
-                self._initialize_ytmusic()
-        
-        if not artist_results:
-            print("❌ No artist results found")
-            return
-        
-        # Step 2: Get the best matching artist
-        target_artist = None
-        for artist in artist_results:
-            if artist.get('artist', '').lower() == artist_name.lower():
-                target_artist = artist
-                break
-        
-        if not target_artist:
-            target_artist = artist_results[0]  # Use first result if no exact match
-        
-        browse_id = target_artist.get('browseId')
-        if not browse_id:
-            print("❌ No browseId found for artist")
-            return
-        
-        print(f"🎤 Using artist: {target_artist.get('artist', 'Unknown')} (ID: {browse_id})")
-        
-        # Step 3: Get artist's songs
-        try:
-            print(f"📀 Fetching artist songs...")
-            artist_info = self.ytmusic.get_artist(browse_id)
-            songs_section = None
-            
-            # Find songs section in artist info
-            for section in artist_info.get('songs', {}).get('results', []):
-                if section:
-                    songs_section = section
+                # Search for artist
+                artist_results = self.ytmusic.search(
+                    artist_name, 
+                    filter="artists", 
+                    limit=5
+                )
+                
+                if not artist_results:
+                    log("No artist results found")
                     break
-            
-            # If no songs section found, try albums approach
-            if not songs_section:
-                print("🔄 No direct songs found, trying albums approach...")
-                albums = artist_info.get('albums', {}).get('results', [])
-                all_songs = []
-                
-                for album in albums[:5]:  # Limit to first 5 albums to avoid too many requests
-                    try:
-                        album_id = album.get('browseId')
-                        if album_id:
-                            album_info = self.ytmusic.get_album(album_id)
-                            album_tracks = album_info.get('tracks', [])
-                            all_songs.extend(album_tracks)
-                            print(f"📀 Added {len(album_tracks)} songs from album: {album.get('title', 'Unknown')}")
-                    except Exception as e:
-                        print(f"⚠️ Error getting album {album.get('title', 'Unknown')}: {e}")
-                        continue
-                
-                songs_section = all_songs
-            
-            if not songs_section:
-                print("❌ No songs found for artist")
-                return
-            
-            print(f"🎵 Found {len(songs_section)} songs, processing up to {limit}...")
-            
-        except Exception as e:
-            print(f"❌ Error getting artist info: {e}")
-            return
-        
-        # Step 4: Process each song
-        for i, song in enumerate(songs_section):
-            if processed_count >= limit:
-                print(f"✅ Reached limit of {limit} songs")
-                break
-            
-            try:
-                video_id = song.get("videoId")
-                if not video_id:
-                    print(f"⚠️ Skipping song {i + 1}: No videoId")
-                    skipped_count += 1
-                    continue
-                
-                title = song.get("title", "Unknown Title")
-                artists = ", ".join(a.get("name", "Unknown") for a in song.get("artists", [])) or artist_name
-                duration = song.get("duration") or song.get("duration_seconds")
-                
-                print(f"🎧 Processing song {processed_count + 1}: {title} by {artists}")
-                
-                # Get album art
-                album_art = ""
-                if include_album_art:
-                    if thumb_quality in [ThumbnailQuality.HIGH, ThumbnailQuality.VERY_HIGH]:
-                        print(f"🖼️ Getting HQ album art for: {video_id}")
-                        
-                        # Method 1: Try YouTube Music specific album art
-                        album_art = self.get_youtube_music_album_art(video_id)
-                        
-                        # Method 2: Try yt-dlp with album art focus
-                        if not album_art:
-                            album_art = self.get_hq_album_art_from_ytdlp(video_id)
-                        
-                        # Method 3: Fallback to song thumbnails
-                        if not album_art:
-                            print("🔄 Falling back to song thumbnails")
-                            thumbnails = song.get("thumbnails", [])
-                            if thumbnails:
-                                base_url = thumbnails[-1].get("url", "")
-                                if base_url:
-                                    if thumb_quality == ThumbnailQuality.HIGH:
-                                        album_art = re.sub(r'w\d+-h\d+', 'w320-h320', base_url)
-                                    elif thumb_quality == ThumbnailQuality.VERY_HIGH:
-                                        album_art = re.sub(r'w\d+-h\d+', 'w544-h544', base_url)
-                                    else:
-                                        album_art = base_url
-                    else:
-                        # Use song thumbnails for LOW and MED quality
-                        thumbnails = song.get("thumbnails", [])
-                        if thumbnails:
-                            base_url = thumbnails[-1].get("url", "")
-                            if base_url:
-                                if thumb_quality == ThumbnailQuality.LOW:
-                                    album_art = re.sub(r'w\d+-h\d+', 'w60-h60', base_url)
-                                elif thumb_quality == ThumbnailQuality.MED:
-                                    album_art = re.sub(r'w\d+-h\d+', 'w120-h120', base_url)
-                                else:
-                                    album_art = base_url
                     
-                    print(f"🖼️ Album art URL: {album_art}")
+                # Find best matching artist
+                target_artist = next(
+                    (a for a in artist_results 
+                    if a.get('artist', '').lower() == artist_name.lower()),
+                    artist_results[0]
+                )
                 
-                # Get audio URL
-                audio_url = None
-                if include_audio_url:
-                    print(f"🎵 Getting audio URL for: {video_id}")
-                    for attempt in range(3):
+                browse_id = target_artist.get('browseId')
+                if not browse_id:
+                    log("No browseId found for artist")
+                    break
+                    
+                log(f"Found artist: {target_artist.get('artist')} ({browse_id})")
+                
+                # Get artist details
+                artist_info = self.ytmusic.get_artist(browse_id)
+                
+                # Extract songs from different possible locations
+                song_items = []
+                
+                # Check primary songs section
+                if 'songs' in artist_info and artist_info['songs']:
+                    songs_data = artist_info['songs']
+                    if isinstance(songs_data, dict):
+                        song_items.extend(songs_data.get('results', []))
+                    elif isinstance(songs_data, list):
+                        song_items.extend(songs_data)
+                
+                # Fallback to album tracks if needed
+                if not song_items and 'albums' in artist_info:
+                    for album in artist_info['albums'].get('results', [])[:3]:
                         try:
-                            audio_url = self.get_audio_url(video_id, audio_quality)
-                            if audio_url:
-                                print(f"✅ Got audio URL on attempt {attempt + 1}")
-                                break
-                            else:
-                                print(f"⚠️ No audio URL on attempt {attempt + 1}")
+                            album_tracks = self.ytmusic.get_album(
+                                album['browseId']
+                            ).get('tracks', [])
+                            song_items.extend(album_tracks)
                         except Exception as e:
-                            print(f"❌ Audio URL attempt {attempt + 1} failed: {e}")
-                        time.sleep(1)
+                            log(f"Error getting album {album.get('title')}: {str(e)}")
+                            continue
                 
-                # Check if we should yield this result
-                should_yield = not include_audio_url or audio_url
+                # Process and yield each song one by one
+                for song in song_items:
+                    if processed_count >= limit:
+                        break
+                        
+                    try:
+                        if not isinstance(song, dict):
+                            continue
+                            
+                        video_id = song.get("videoId")
+                        if not video_id:
+                            continue
+                            
+                        # Basic info
+                        title = song.get("title", "Unknown Title")
+                        artists = ", ".join(
+                            a.get("name", "Unknown") 
+                            for a in song.get("artists", [])
+                        ) or artist_name
+                        duration = song.get("duration")
+                        
+                        # Album art
+                        album_art = ""
+                        if include_album_art:
+                            try:
+                                if thumb_quality in ["HIGH", "VERY_HIGH"]:
+                                    album_art = self.get_youtube_music_album_art(video_id)
+                                    if not album_art:
+                                        album_art = self.get_hq_album_art_from_ytdlp(video_id)
+                                
+                                if not album_art:
+                                    thumbnails = song.get("thumbnails", [])
+                                    if thumbnails:
+                                        base_url = thumbnails[-1].get("url", "")
+                                        if base_url:
+                                            if thumb_quality == "HIGH":
+                                                album_art = re.sub(r'w\d+-h\d+', 'w320-h320', base_url)
+                                            elif thumb_quality == "VERY_HIGH":
+                                                album_art = re.sub(r'w\d+-h\d+', 'w544-h544', base_url)
+                                            else:
+                                                album_art = base_url
+                            except Exception as e:
+                                log(f"Error getting album art: {str(e)}")
+                        
+                        # Audio URL
+                        audio_url = None
+                        if include_audio_url:
+                            try:
+                                audio_url = self.get_audio_url(video_id, audio_quality)
+                            except Exception as e:
+                                log(f"Error getting audio URL: {str(e)}")
+                        
+                        # Only yield if we have audio URL or don't need it
+                        if include_audio_url and not audio_url:
+                            continue
+                            
+                        processed_count += 1
+                        
+                        yield {
+                            "title": title,
+                            "artists": artists,
+                            "videoId": video_id,
+                            "duration": duration,
+                            "albumArt": album_art if include_album_art else None,
+                            "audioUrl": audio_url if include_audio_url else None,
+                            "artistName": artist_name
+                        }
+                        
+                    except Exception as e:
+                        log(f"Error processing song: {str(e)}")
+                        continue
+                        
+                break  # Successfully processed
                 
-                if should_yield:
-                    song_data = {
-                        "title": title,
-                        "artists": artists,
-                        "videoId": video_id,
-                        "duration": duration,
-                        "artist_name": artist_name
-                    }
-                    if include_album_art:
-                        song_data["albumArt"] = album_art
-                    if include_audio_url:
-                        song_data["audioUrl"] = audio_url
-                    
-                    processed_count += 1
-                    print(f"✅ Yielding song {processed_count}: {title} by {artists}")
-                    yield song_data
-                else:
-                    print(f"⚠️ Skipping song: Could not get audio URL for {title}")
-                    skipped_count += 1
-            
             except Exception as e:
-                print(f"❌ Error processing song {i + 1}: {e}")
-                skipped_count += 1
-                continue
+                retry_count += 1
+                log(f"Attempt {retry_count} failed: {str(e)}")
+                if retry_count < max_retries:
+                    time.sleep(2 ** retry_count)
+                    self._initialize_ytmusic()
+                else:
+                    log("Max retries reached")
+                    break
         
-        print(f"🎉 Artist songs fetch completed! Found {processed_count} valid songs (skipped {skipped_count})")
+        log(f"Streamed {processed_count} songs")
 
 # =================================================================================================================================
 # =================================================================================================================================
@@ -1021,8 +1138,8 @@ class YTMusicRelatedFetcher:
         except Exception as e:
             print(f"Error getting video info for {video_id}: {str(e)}")
             return None
-
     def getRelated(
+
         self,
         song_name: str,
         artist_name: str,
@@ -1149,7 +1266,7 @@ class YTMusicRelatedFetcher:
                         song_data["audioUrl"] = audio_url
 
                     processed_count += 1
-                    yield song_data
+                    yield song_data  # Yield each song as it's processed
                 else:
                     skipped_count += 1
 
@@ -1414,11 +1531,39 @@ class DynamicLyricsProvider:
 
 # Test examples
 # if __name__ == "__main__":
-#     # Initialize both services
-#     print("Initializing services...")
+# #     # Initialize both services
+# #     print("Initializing services...")
+# #     searcher = YTMusicSearcher(country="US")
+# #     related_fetcher = YTMusicRelatedFetcher(country="US")
 #     searcher = YTMusicSearcher(country="US")
-#     related_fetcher = YTMusicRelatedFetcher(country="US")
+
+#     # Single song lookup
+#     # song_details = searcher.get_song_details(
+#     #     songs=[{"song_name": "Blinding Lights", "artist_name": "The Weeknd"}],
+#     #     mode="single"
+#     # )
+
+#     # if song_details:
+#     #     print(f"Title: {song_details['title']}")
+#     #     print(f"Artists: {song_details['artists']}")
+#     # print("Single Mode: Results Ready")
     
+
+#     # Batch processing
+#     songs_to_lookup = [
+#         {"song_name": "Viva La Vida", "artist_name": "Coldplay"},
+#         {"song_name": "Shape of You", "artist_name": "Ed Sheeran"}
+#     ]
+
+#     for song in searcher.get_song_details(
+#         songs=songs_to_lookup,
+#         mode="batch"
+#     ):
+#         # print(f"\n{song['title']} by {song['artists']}")
+#         print("Batch Mode: Results Ready")
+
+
+
 #     # Test search functionality
 #     print("\n=== Testing Search Functionality ===")
 #     test_query = "Gale Lag Ja"
@@ -1453,47 +1598,6 @@ class DynamicLyricsProvider:
 #     print("\nTests completed successfully!")
 
 
-# if __name__ == "__main__":
-# #     print("=== Testing HQ Thumbnail Functionality ===")
+
     
-# #     # Initialize searcher
-#     searcher = YTMusicSearcher(country="US")
-    
-# #     # Test search with HQ thumbnails
-#     print("\n--- Testing Search with VERY_HIGH Quality Thumbnails ---")
-#     test_query = "Blinding Lights"
-    
-#     for i, song in enumerate(searcher.get_music_details(
-#         test_query, 
-#         limit=2, 
-#         thumb_quality=ThumbnailQuality.VERY_HIGH,
-#         audio_quality=AudioQuality.VERY_HIGH,
-#         include_audio_url=True  # Faster testing
-#     ), 1):
-#         print(f"\n{i}. {song['title']} by {song['artists']}")
-#         print(f"Video ID: {song['videoId']}")
-#         if 'albumArt' in song and song['albumArt']:
-#             print(f"HQ Album Art URL: {song['albumArt']}")
-#             print(f"HQ Audio URL: {song['audioUrl']}")
-#         else:
-            # print("No album art found")
-    
-    # Test related songs with HQ thumbnails
-    # print("\n--- Testing Related Songs with HIGH Quality Thumbnails ---")
-    # related_fetcher = YTMusicRelatedFetcher(country="US")
-    
-    # for i, song in enumerate(related_fetcher.getRelated(
-    #     song_name="Shape of You",
-    #     artist_name="Ed Sheeran",
-    #     limit=2,
-    #     thumb_quality=ThumbnailQuality.HIGH,
-    #     include_audio_url=False
-    # ), 1):
-    #     print(f"\n{i}. {song['title']} by {song['artists']}")
-    #     print(f"Video ID: {song['videoId']}")
-    #     if 'albumArt' in song and song['albumArt']:
-    #         print(f"HQ Album Art URL: {song['albumArt']}")
-    #     else:
-    #         print("No album art found")
-    
-    # print("\nHQ Thumbnail testing completed!")
+
