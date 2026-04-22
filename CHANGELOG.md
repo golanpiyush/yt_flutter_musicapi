@@ -5,9 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),  
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.4.3]
+
+## [3.4.4]
 
 `Active & Working`
+
+### Fixed
+- Fixed `packageDebugAssets` task not found build failure caused by 
+  incompatibility between Chaquopy `16.1.0` and Android Gradle Plugin `8.7.x`.
+- Upgraded Chaquopy from `16.1.0` to `17.0.0` to restore compatibility 
+  with AGP `7.3.x` – `9.1.x` range.
+
+## [3.4.3]
+
+`Broken`
 
 ### Patch
   - Patched the version of `ytmusicapi` & `YT-DLP` to their newest relases.
