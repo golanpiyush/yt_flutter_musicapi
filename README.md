@@ -1,5 +1,8 @@
 # 🎵 YT Flutter Music API
 
+Not_Maintained_Anymore
+
+
 A powerful Flutter plugin that bridges **YouTube Music** functionality using a **Kotlin + Python (Chaquopy)** backend.  
 Search songs, stream results in real time, and fetch related tracks—all directly from your Flutter app.
 
