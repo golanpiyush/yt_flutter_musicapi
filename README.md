@@ -1,6 +1,9 @@
 # 🎵 YT Flutter Music API
 
 Not_Maintained_Anymore
+to still be able to use head to, ‘build/gradle’ and change the YtMusic=$latest_version
+YtDlp=$latest_version to the latest versions for each library. finish it off by running ‘gradle.bat’
+and incrementing the plugin version to another...
 
 
 A powerful Flutter plugin that bridges **YouTube Music** functionality using a **Kotlin + Python (Chaquopy)** backend.  
